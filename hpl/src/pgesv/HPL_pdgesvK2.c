@@ -99,6 +99,10 @@ void HPL_pdgesvK2
    int                        N, depth, icurcol=0, j, jb, jj=0, jstart,
                               k, mycol, n, nb, nn, npcol, nq,
                               tag=MSGID_BEGIN_FACT, test=HPL_KEEP_TESTING;
+#ifdef HPL_SDC_CHECK
+   HPL_T_SDC_LOG              sdc_log_global;
+   int                        myrank;
+#endif
 #ifdef HPL_PROGRESS_REPORT
    double start_time, time, gflops;
 #endif
@@ -110,6 +114,11 @@ void HPL_pdgesvK2
    N     = A->n;        nb           = A->nb;
 
    if( N <= 0 ) return;
+
+#ifdef HPL_SDC_CHECK
+   MPI_Comm_rank( GRID->all_comm, &myrank );
+   HPL_sdc_log_init( &sdc_log_global, GRID->all_comm );
+#endif
 
 #ifdef HPL_PROGRESS_REPORT
    start_time = HPL_timer_walltime();
@@ -194,12 +203,83 @@ void HPL_pdgesvK2
          for( k = 0; k < depth; k++ )   /* partial updates 0..depth-1 */
             (void) HPL_pdupdate( NULL, NULL, panel[k], nn );
          HPL_pdfact(       panel[depth] );    /* factor current panel */
+#ifdef HPL_SDC_CHECK
+         /* Compute panel checksum after factorization */
+         if( panel[depth]->CS_PANEL && panel[depth]->CS_WEIGHTS )
+         {
+            HPL_sdc_panel_checksum( panel[depth]->L2, panel[depth]->ldl2,
+               ( panel[depth]->grid->myrow == panel[depth]->prow ?
+                 panel[depth]->mp - panel[depth]->jb : panel[depth]->mp ),
+               panel[depth]->jb, panel[depth]->CS_WEIGHTS,
+               panel[depth]->CS_PANEL );
+         }
+#endif
       }
       else { nn = 0; }
+#ifdef HPL_SDC_CHECK
+      /* Compute broadcast buffer checksum before broadcast */
+      if( mycol == icurcol && panel[depth]->CS_PANEL )
+      {
+         HPL_sdc_compute_bcast_checksum( panel[depth]->L2, panel[depth]->ldl2,
+            panel[depth]->L1, panel[depth]->jb, panel[depth]->DPIV,
+            panel[depth]->jb, &(panel[depth]->cs_bcast) );
+      }
+#endif
           /* Finish the latest update and broadcast the current panel */
       (void) HPL_binit( panel[depth] );
       HPL_pdupdate( panel[depth], &test, panel[0], nq-nn );
       (void) HPL_bwait( panel[depth] );
+#ifdef HPL_SDC_CHECK
+      /* Verify broadcast integrity */
+      if( HPL_SDC_BCAST_VERIFY && panel[depth]->sdc_log )
+      {
+         double cs_recv = 0.0;
+         HPL_sdc_compute_bcast_checksum( panel[depth]->L2, panel[depth]->ldl2,
+            panel[depth]->L1, panel[depth]->jb, panel[depth]->DPIV,
+            panel[depth]->jb, &cs_recv );
+         if( HPL_sdc_verify_checksum( panel[depth]->cs_bcast, cs_recv,
+                                      HPL_SDC_THRESHOLD ) )
+         {
+            HPL_sdc_log_fault( panel[depth]->sdc_log, myrank,
+               panel[depth]->grid->myrow, panel[depth]->grid->mycol,
+               HPL_SDC_FAULT_PANEL_BCAST, j,
+               panel[depth]->ia, panel[depth]->ja,
+               panel[depth]->cs_bcast, cs_recv );
+            HPL_pwarn( stdout, __LINE__, "HPL_pdgesvK2",
+               "SDC detected in panel broadcast at column %d on rank %d",
+               j, myrank );
+         }
+      }
+      /* Periodic full verification of trailing matrix */
+      if( panel[depth]->sdc_log )
+      {
+         panel[depth]->sdc_step++;
+         if( panel[depth]->sdc_step % HPL_SDC_VERIFY_EVERY_K_STEPS == 0 )
+         {
+            if( panel[depth]->CS_TRAIL && panel[depth]->A )
+            {
+               int trail_m = panel[depth]->mp;
+               int trail_n = panel[depth]->nq;
+               if( trail_m > 0 && trail_n > 0 )
+               {
+                  if( HPL_sdc_verify_trailing( panel[depth]->A,
+                     panel[depth]->lda, trail_m, trail_n,
+                     panel[depth]->CS_TRAIL, HPL_SDC_THRESHOLD ) )
+                  {
+                     HPL_sdc_log_fault( panel[depth]->sdc_log, myrank,
+                        panel[depth]->grid->myrow, panel[depth]->grid->mycol,
+                        HPL_SDC_FAULT_TRAIL_UPDATE, j,
+                        panel[depth]->ia, panel[depth]->ja,
+                        0.0, 0.0 );
+                     HPL_pwarn( stdout, __LINE__, "HPL_pdgesvK2",
+                        "SDC detected in trailing matrix at column %d rank %d",
+                        j, myrank );
+                  }
+               }
+            }
+         }
+      }
+#endif
 /*
  * Circular  of the panel pointers:
  * xtmp = x[0]; for( k=0; k < depth; k++ ) x[k] = x[k+1]; x[d] = xtmp;
@@ -225,6 +305,11 @@ void HPL_pdgesvK2
    (void) HPL_pdpanel_disp( &panel[depth] );
 
    if( panel ) free( panel );
+#ifdef HPL_SDC_CHECK
+   /* Aggregate and report SDC faults from all processes */
+   HPL_sdc_report_and_aggregate( &sdc_log_global, GRID->all_comm, myrank );
+   HPL_sdc_log_cleanup( &sdc_log_global );
+#endif
 /*
  * End of HPL_pdgesvK2
  */

@@ -52,6 +52,7 @@
  */
 #include "hpl_pmisc.h"
 #include "hpl_grid.h"
+#include "hpl_sdc.h"
 /*
  * ---------------------------------------------------------------------
  * Data Structures
@@ -91,6 +92,15 @@ typedef struct HPL_S_panel
    int                 msgid;           /* message id for panel bcast */
    int                 ldl2;         /* local leading dim of array L2 */
    int                 len;      /* length of the buffer to broadcast */
+#ifdef HPL_SDC_CHECK
+   double              * CS_PANEL;  /* jb checksum values for panel cols */
+   double              * CS_TRAIL;  /* nq checksum values for trail matrix */
+   double              * CS_WEIGHTS; /* mp weights for checksum computation */
+   double                cs_bcast;  /* checksum of broadcast buffer */
+   int                   sdc_step;  /* step counter for adaptive verify */
+   int                   sdc_verified; /* 1 if panel passed checksum verify */
+   HPL_T_SDC_LOG       * sdc_log;   /* per-panel SDC fault log */
+#endif
 #ifdef HPL_CALL_VSIPL
    vsip_block_d        * Ablock;                           /* A block */
    vsip_block_d        * L1block;                         /* L1 block */

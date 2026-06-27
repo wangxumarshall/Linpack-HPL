@@ -431,6 +431,15 @@ void HPL_pdtest
          "||b||_oo . . . . . . . . . . . . . . . . . . . = ", BnormI );
       }
    }
+#ifdef HPL_SDC_CHECK
+   if( GRID->myrow == 0 && GRID->mycol == 0 )
+   {
+      HPL_fprintf( TEST->outfp, "\n" );
+      HPL_fprintf( TEST->outfp, "SDC Check  . . . . . . . . . . . . . . . . . . = ENABLED\n" );
+      HPL_fprintf( TEST->outfp, "  N=%d, NB=%d  (checksum ABFT verification active)\n", N, NB );
+      HPL_fprintf( TEST->outfp, "\n" );
+   }
+#endif
    if( vptr ) free( vptr );
 /*
  * End of HPL_pdtest

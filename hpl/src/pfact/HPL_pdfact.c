@@ -123,12 +123,50 @@ void HPL_pdfact
               sizeof(double) );
    if( vptr == NULL )
    { HPL_pabort( __LINE__, "HPL_pdfact", "Memory allocation failed" ); }
+#ifdef HPL_SDC_CHECK
+/*
+ * Compute panel checksum before factorization for later verification
+ */
+   if( PANEL->CS_PANEL && PANEL->CS_WEIGHTS )
+   {
+      HPL_sdc_panel_checksum( PANEL->A, PANEL->lda, PANEL->mp, jb,
+         PANEL->CS_WEIGHTS, PANEL->CS_PANEL );
+   }
+#endif
 /*
  * Factor the panel - Update the panel pointers
  */
    PANEL->algo->rffun( PANEL, PANEL->mp, jb, 0, (double *)HPL_PTR( vptr,
                        ((size_t)(align) * sizeof(double) ) ) );
    if( vptr ) free( vptr );
+#ifdef HPL_SDC_CHECK
+/*
+ * Verify panel factorization: recompute checksum of factored panel
+ * and compare with pre-factorization checksum
+ */
+   if( HPL_SDC_PANEL_VERIFY && PANEL->CS_PANEL && PANEL->CS_WEIGHTS )
+   {
+      if( HPL_sdc_verify_panel( PANEL->L2, PANEL->ldl2,
+         ( PANEL->grid->myrow == PANEL->prow ?
+           PANEL->mp - jb : PANEL->mp ),
+         jb, PANEL->CS_WEIGHTS, PANEL->CS_PANEL,
+         HPL_SDC_THRESHOLD ) )
+      {
+         if( PANEL->sdc_log )
+         {
+            int myrank;
+            MPI_Comm_rank( PANEL->grid->all_comm, &myrank );
+            HPL_sdc_log_fault( PANEL->sdc_log, myrank,
+               PANEL->grid->myrow, PANEL->grid->mycol,
+               HPL_SDC_FAULT_PANEL_FACT, PANEL->ja - jb,
+               PANEL->ia, PANEL->ja - jb, 0.0, 0.0 );
+            HPL_pwarn( stdout, __LINE__, "HPL_pdfact",
+               "SDC detected in panel factorization at column %d rank %d",
+               PANEL->ja - jb, myrank );
+         }
+      }
+   }
+#endif
 
    PANEL->A   = Mptr( PANEL->A, 0, jb, PANEL->lda );
    PANEL->nq -= jb; PANEL->jj += jb;

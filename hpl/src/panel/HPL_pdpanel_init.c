@@ -342,6 +342,26 @@ void HPL_pdpanel_init
    { HPL_pabort( __LINE__, "HPL_pdpanel_init", "Memory allocation failed" ); }
                        /* Initialize the first entry of the workarray */
    *(PANEL->IWORK) = -1;
+#ifdef HPL_SDC_CHECK
+/*
+ * Allocate SDC checksum workspace
+ */
+   PANEL->CS_PANEL  = (double *)malloc( (size_t)Mmax(1,JB) * sizeof(double) );
+   PANEL->CS_TRAIL  = (double *)malloc( (size_t)Mmax(1,nq) * sizeof(double) );
+   PANEL->CS_WEIGHTS = (double *)malloc( (size_t)Mmax(1,mp) * sizeof(double) );
+   if( PANEL->CS_PANEL && PANEL->CS_WEIGHTS )
+   {
+      HPL_sdc_init_weights( PANEL->CS_WEIGHTS, mp );
+   }
+   PANEL->cs_bcast    = 0.0;
+   PANEL->sdc_step    = 0;
+   PANEL->sdc_verified = 0;
+   PANEL->sdc_log     = (HPL_T_SDC_LOG *)malloc( sizeof(HPL_T_SDC_LOG) );
+   if( PANEL->sdc_log )
+   {
+      HPL_sdc_log_init( PANEL->sdc_log, GRID->all_comm );
+   }
+#endif
 /*
  * End of HPL_pdpanel_init
  */

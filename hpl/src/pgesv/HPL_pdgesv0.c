@@ -98,6 +98,10 @@ void HPL_pdgesv0
    HPL_T_UPD_FUN              HPL_pdupdate;
    int                        N, j, jb, n, nb, tag=MSGID_BEGIN_FACT,
                               test=HPL_KEEP_TESTING;
+#ifdef HPL_SDC_CHECK
+   HPL_T_SDC_LOG              sdc_log_global;
+   int                        myrank;
+#endif
 #ifdef HPL_PROGRESS_REPORT
    double start_time, time, gflops;
 #endif
@@ -105,6 +109,11 @@ void HPL_pdgesv0
  * .. Executable Statements ..
  */
    if( ( N = A->n ) <= 0 ) return;
+
+#ifdef HPL_SDC_CHECK
+   MPI_Comm_rank( GRID->all_comm, &myrank );
+   HPL_sdc_log_init( &sdc_log_global, GRID->all_comm );
+#endif
 
 #ifdef HPL_PROGRESS_REPORT
    start_time = HPL_timer_walltime();
@@ -144,11 +153,39 @@ void HPL_pdgesv0
  * Factor and broadcast current panel - update
  */
       HPL_pdfact(               panel[0] );
+#ifdef HPL_SDC_CHECK
+      /* Compute broadcast checksum */
+      if( panel[0]->CS_PANEL )
+      {
+         HPL_sdc_compute_bcast_checksum( panel[0]->L2, panel[0]->ldl2,
+            panel[0]->L1, panel[0]->jb, panel[0]->DPIV,
+            panel[0]->jb, &(panel[0]->cs_bcast) );
+      }
+#endif
       (void) HPL_binit(         panel[0] );
       do
       { (void) HPL_bcast(       panel[0], &test ); }
       while( test != HPL_SUCCESS );
       (void) HPL_bwait(         panel[0] );
+#ifdef HPL_SDC_CHECK
+      /* Verify broadcast */
+      if( HPL_SDC_BCAST_VERIFY && panel[0]->sdc_log )
+      {
+         double cs_recv = 0.0;
+         HPL_sdc_compute_bcast_checksum( panel[0]->L2, panel[0]->ldl2,
+            panel[0]->L1, panel[0]->jb, panel[0]->DPIV,
+            panel[0]->jb, &cs_recv );
+         if( HPL_sdc_verify_checksum( panel[0]->cs_bcast, cs_recv,
+                                      HPL_SDC_THRESHOLD ) )
+         {
+            HPL_sdc_log_fault( panel[0]->sdc_log, myrank,
+               panel[0]->grid->myrow, panel[0]->grid->mycol,
+               HPL_SDC_FAULT_PANEL_BCAST, j,
+               panel[0]->ia, panel[0]->ja,
+               panel[0]->cs_bcast, cs_recv );
+         }
+      }
+#endif
       HPL_pdupdate( NULL, NULL, panel[0], -1 );
 /*
  * Update message id for next factorization
@@ -161,6 +198,10 @@ void HPL_pdgesv0
    (void) HPL_pdpanel_disp( &panel[0] );
 
    if( panel ) free( panel );
+#ifdef HPL_SDC_CHECK
+   HPL_sdc_report_and_aggregate( &sdc_log_global, GRID->all_comm, myrank );
+   HPL_sdc_log_cleanup( &sdc_log_global );
+#endif
 /*
  * End of HPL_pdgesv0
  */

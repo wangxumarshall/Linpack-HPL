@@ -118,6 +118,22 @@ void HPL_pdupdateTN
 #endif
    nb = PANEL->nb; jb = PANEL->jb; n = PANEL->nq; lda = PANEL->lda;
    if( NN >= 0 ) n = Mmin( NN, n );
+#ifdef HPL_SDC_CHECK
+/*
+ * Initialize trailing checksum on first entry if not yet done
+ */
+   if( PANEL->CS_TRAIL && PANEL->CS_WEIGHTS && n > 0 )
+   {
+      int _j;
+      for( _j = 0; _j < n; _j++ )
+      {
+         double _s = 0.0; int _i;
+         for( _i = 0; _i < PANEL->mp; _i++ )
+            _s += PANEL->A[_i + _j * lda];
+         PANEL->CS_TRAIL[_j] = _s;
+      }
+   }
+#endif
 /*
  * There is nothing to update, enforce the panel broadcast.
  */
@@ -201,6 +217,11 @@ void HPL_pdupdateTN
                     jb, -HPL_rone, L2ptr, ldl2, Aptr, lda, HPL_rone,
                     Mptr( Aptr, jb, 0, lda ), lda );
 #endif
+#ifdef HPL_SDC_CHECK
+         if( PANEL->CS_TRAIL && PANEL->CS_WEIGHTS )
+            HPL_sdc_update_trail_checksum( PANEL->CS_TRAIL, L2ptr, ldl2,
+               Aptr, lda, mp, jb, nn, PANEL->CS_WEIGHTS );
+#endif
          Aptr = Mptr( Aptr, 0, nn, lda ); nq0 += nn; 
 
          (void) HPL_bcast( PBCST, &test ); 
@@ -237,6 +258,11 @@ void HPL_pdupdateTN
          HPL_dgemm( HplColumnMajor, HplNoTrans, HplNoTrans, mp, nn,
                     jb, -HPL_rone, L2ptr, ldl2, Aptr, lda, HPL_rone,
                     Mptr( Aptr, jb, 0, lda ), lda );
+#endif
+#ifdef HPL_SDC_CHECK
+         if( PANEL->CS_TRAIL && PANEL->CS_WEIGHTS )
+            HPL_sdc_update_trail_checksum( PANEL->CS_TRAIL, L2ptr, ldl2,
+               Aptr, lda, mp, jb, nn, PANEL->CS_WEIGHTS );
 #endif
       }
 #ifdef HPL_CALL_VSIPL
@@ -325,6 +351,11 @@ void HPL_pdupdateTN
                        jb, -HPL_rone, L2ptr, ldl2, Uptr, LDU, HPL_rone,
                        Mptr( Aptr, jb, 0, lda ), lda );
 #endif
+#ifdef HPL_SDC_CHECK
+            if( PANEL->CS_TRAIL && PANEL->CS_WEIGHTS )
+               HPL_sdc_update_trail_checksum( PANEL->CS_TRAIL, L2ptr, ldl2,
+                  Uptr, LDU, mp, jb, nn, PANEL->CS_WEIGHTS );
+#endif
             HPL_dlacpy( jb, nn, Uptr, LDU, Aptr, lda );
          }
          else
@@ -347,6 +378,11 @@ void HPL_pdupdateTN
             HPL_dgemm( HplColumnMajor, HplNoTrans, HplNoTrans, mp, nn,
                        jb, -HPL_rone, L2ptr, ldl2, Uptr, LDU, HPL_rone,
                        Aptr, lda );
+#endif
+#ifdef HPL_SDC_CHECK
+            if( PANEL->CS_TRAIL && PANEL->CS_WEIGHTS )
+               HPL_sdc_update_trail_checksum( PANEL->CS_TRAIL, L2ptr, ldl2,
+                  Uptr, LDU, mp, jb, nn, PANEL->CS_WEIGHTS );
 #endif
          }
          Uptr = Mptr( Uptr, 0, nn, LDU );
@@ -383,6 +419,11 @@ void HPL_pdupdateTN
                        jb, -HPL_rone, L2ptr, ldl2, Uptr, LDU, HPL_rone,
                        Mptr( Aptr, jb, 0, lda ), lda );
 #endif
+#ifdef HPL_SDC_CHECK
+            if( PANEL->CS_TRAIL && PANEL->CS_WEIGHTS )
+               HPL_sdc_update_trail_checksum( PANEL->CS_TRAIL, L2ptr, ldl2,
+                  Uptr, LDU, mp, jb, nn, PANEL->CS_WEIGHTS );
+#endif
             HPL_dlacpy( jb, nn, Uptr, LDU, Aptr, lda );
          }
          else
@@ -405,6 +446,11 @@ void HPL_pdupdateTN
             HPL_dgemm( HplColumnMajor, HplNoTrans, HplNoTrans, mp, nn,
                        jb, -HPL_rone, L2ptr, ldl2, Uptr, LDU, HPL_rone,
                        Aptr, lda );
+#endif
+#ifdef HPL_SDC_CHECK
+            if( PANEL->CS_TRAIL && PANEL->CS_WEIGHTS )
+               HPL_sdc_update_trail_checksum( PANEL->CS_TRAIL, L2ptr, ldl2,
+                  Uptr, LDU, mp, jb, nn, PANEL->CS_WEIGHTS );
 #endif
          }
       }

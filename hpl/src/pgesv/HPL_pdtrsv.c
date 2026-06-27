@@ -287,6 +287,25 @@ void HPL_pdtrsv
                             Ccomm );
 
    if( Wfr  ) free( W  );
+#ifdef HPL_SDC_CHECK
+/*
+ * Compute checksum of solution vector X for SDC detection
+ */
+   {
+      double cs_x = 0.0;
+      int _i;
+      for( _i = 0; _i < Anq; _i++ ) cs_x += XR[_i];
+      /* Check for NaN/Inf in solution */
+      if( cs_x != cs_x || cs_x > 1.0e300 || cs_x < -1.0e300 )
+      {
+         int _myrank;
+         MPI_Comm_rank( GRID->all_comm, &_myrank );
+         HPL_pwarn( stdout, __LINE__, "HPL_pdtrsv",
+            "SDC suspected in back substitution: solution checksum anomalous"
+            " on rank %d (cs=%e)", _myrank, cs_x );
+      }
+   }
+#endif
 #ifdef HPL_DETAILED_TIMING
    HPL_ptimer( HPL_TIMING_PTRSV );
 #endif

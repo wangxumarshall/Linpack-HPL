@@ -101,6 +101,16 @@ void HPL_copyL
          HPL_dlacpy( PANEL->mp,    jb, Mptr( PANEL->A,  0, -jb, lda ),
                      lda, PANEL->L2, PANEL->ldl2 );
       }
+#ifdef HPL_SDC_CHECK
+/*
+ * Compute checksum of the broadcast buffer (L2 + L1 + DPIV)
+ */
+      if( PANEL->CS_PANEL )
+      {
+         HPL_sdc_compute_bcast_checksum( PANEL->L2, PANEL->ldl2,
+            PANEL->L1, jb, PANEL->DPIV, jb, &(PANEL->cs_bcast) );
+      }
+#endif
    }
 /*
  * End of HPL_copyL
