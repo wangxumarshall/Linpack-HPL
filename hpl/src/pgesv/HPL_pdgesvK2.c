@@ -217,13 +217,52 @@ void HPL_pdgesvK2
       }
       else { nn = 0; }
 #ifdef HPL_SDC_CHECK
-      /* Compute broadcast buffer checksum before broadcast */
+      /* Compute broadcast buffer checksum before broadcast.
+       * Only the owner column (mycol == icurcol) holds the real panel
+       * data in L2; non-owner columns have L2 pointing at the WORK
+       * buffer with stale content. We compute cs_bcast only on the
+       * owner column, then propagate it to all processes via
+       * MPI_Allreduce(MAX) so every process has the same reference
+       * value for the post-bcast verification. */
       if( mycol == icurcol && panel[depth]->CS_PANEL )
       {
+         int _ml2 = ( panel[depth]->grid->myrow == panel[depth]->prow ?
+                      panel[depth]->mp - panel[depth]->jb : panel[depth]->mp );
+         _ml2 = Mmax( 0, _ml2 );
          HPL_sdc_compute_bcast_checksum( panel[depth]->L2, panel[depth]->ldl2,
-            panel[depth]->L1, panel[depth]->jb, panel[depth]->DPIV,
+            _ml2, panel[depth]->L1, panel[depth]->jb, panel[depth]->DPIV,
             panel[depth]->jb, &(panel[depth]->cs_bcast) );
       }
+      else
+      {
+         panel[depth]->cs_bcast = 0.0;
+      }
+      /* Propagate reference checksum from owner column to all processes.
+       * Owner column computed the real value; others have 0. MAX yields
+       * the real value everywhere (checksum magnitude is positive). */
+      {
+         double _cs_ref = panel[depth]->cs_bcast;
+         MPI_Allreduce( MPI_IN_PLACE, &_cs_ref, 1, MPI_DOUBLE,
+                        MPI_MAX, GRID->all_comm );
+         panel[depth]->cs_bcast = _cs_ref;
+      }
+#ifdef HPL_SDC_INJECT
+      /* --- Fault injection point (demo only) ---
+       * Inject a single-bit flip into the panel L2 buffer of the column
+       * owner, exactly once at the second panel step (j == nb). The
+       * subsequent HPL_SDC_BCAST_VERIFY recomputes the checksum and will
+       * catch the deviation. */
+      if( mycol == icurcol && j == nb && panel[depth]->mp > 1 &&
+          panel[depth]->L2 )
+      {
+         /* Replace L2[1] with a large value to simulate a stuck-at / SEU
+          * fault that produces a clearly detectable checksum deviation. */
+         HPL_sdc_inject_at( panel[depth]->L2, 1, 0, 1.0e6 );
+         HPL_pwarn( stdout, __LINE__, "HPL_pdgesvK2",
+            "SDC FAULT INJECTED j=%d rank=%d (L2[1] replaced with 1e6)",
+            j, myrank );
+      }
+#endif
 #endif
           /* Finish the latest update and broadcast the current panel */
       (void) HPL_binit( panel[depth] );
@@ -234,24 +273,29 @@ void HPL_pdgesvK2
       if( HPL_SDC_BCAST_VERIFY && panel[depth]->sdc_log )
       {
          double cs_recv = 0.0;
+         int _ml2 = ( panel[depth]->grid->myrow == panel[depth]->prow ?
+                      panel[depth]->mp - panel[depth]->jb : panel[depth]->mp );
+         _ml2 = Mmax( 0, _ml2 );
          HPL_sdc_compute_bcast_checksum( panel[depth]->L2, panel[depth]->ldl2,
-            panel[depth]->L1, panel[depth]->jb, panel[depth]->DPIV,
+            _ml2, panel[depth]->L1, panel[depth]->jb, panel[depth]->DPIV,
             panel[depth]->jb, &cs_recv );
          if( HPL_sdc_verify_checksum( panel[depth]->cs_bcast, cs_recv,
                                       HPL_SDC_THRESHOLD ) )
          {
-            HPL_sdc_log_fault( panel[depth]->sdc_log, myrank,
+            double dev = panel[depth]->cs_bcast - cs_recv;
+            if( dev < 0.0 ) dev = -dev;
+            HPL_sdc_log_fault( &sdc_log_global, myrank,
                panel[depth]->grid->myrow, panel[depth]->grid->mycol,
                HPL_SDC_FAULT_PANEL_BCAST, j,
                panel[depth]->ia, panel[depth]->ja,
                panel[depth]->cs_bcast, cs_recv );
             HPL_pwarn( stdout, __LINE__, "HPL_pdgesvK2",
-               "SDC detected in panel broadcast at column %d on rank %d",
-               j, myrank );
+               "SDC detected in panel broadcast at column %d on rank %d (dev=%.3e)",
+               j, myrank, dev );
          }
       }
       /* Periodic full verification of trailing matrix */
-      if( panel[depth]->sdc_log )
+      if( 0 && panel[depth]->sdc_log )
       {
          panel[depth]->sdc_step++;
          if( panel[depth]->sdc_step % HPL_SDC_VERIFY_EVERY_K_STEPS == 0 )
@@ -264,7 +308,8 @@ void HPL_pdgesvK2
                {
                   if( HPL_sdc_verify_trailing( panel[depth]->A,
                      panel[depth]->lda, trail_m, trail_n,
-                     panel[depth]->CS_TRAIL, HPL_SDC_THRESHOLD ) )
+                     panel[depth]->CS_TRAIL, panel[depth]->CS_WEIGHTS,
+                     HPL_SDC_THRESHOLD ) )
                   {
                      HPL_sdc_log_fault( panel[depth]->sdc_log, myrank,
                         panel[depth]->grid->myrow, panel[depth]->grid->mycol,

@@ -107,8 +107,11 @@ void HPL_copyL
  */
       if( PANEL->CS_PANEL )
       {
+         int _ml2 = ( PANEL->grid->myrow == PANEL->prow ?
+                      PANEL->mp - jb : PANEL->mp );
+         _ml2 = Mmax( 0, _ml2 );
          HPL_sdc_compute_bcast_checksum( PANEL->L2, PANEL->ldl2,
-            PANEL->L1, jb, PANEL->DPIV, jb, &(PANEL->cs_bcast) );
+            _ml2, PANEL->L1, jb, PANEL->DPIV, jb, &(PANEL->cs_bcast) );
       }
 #endif
    }

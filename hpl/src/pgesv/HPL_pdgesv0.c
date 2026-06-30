@@ -154,12 +154,27 @@ void HPL_pdgesv0
  */
       HPL_pdfact(               panel[0] );
 #ifdef HPL_SDC_CHECK
-      /* Compute broadcast checksum */
-      if( panel[0]->CS_PANEL )
+      /* Compute broadcast checksum. Only the owner column holds the real
+       * panel data in L2; propagate the reference value to all processes
+       * via MPI_Allreduce(MAX) so the post-bcast verification is correct. */
+      if( GRID->mycol == panel[0]->pcol && panel[0]->CS_PANEL )
       {
+         int _ml2 = ( panel[0]->grid->myrow == panel[0]->prow ?
+                      panel[0]->mp - panel[0]->jb : panel[0]->mp );
+         _ml2 = Mmax( 0, _ml2 );
          HPL_sdc_compute_bcast_checksum( panel[0]->L2, panel[0]->ldl2,
-            panel[0]->L1, panel[0]->jb, panel[0]->DPIV,
+            _ml2, panel[0]->L1, panel[0]->jb, panel[0]->DPIV,
             panel[0]->jb, &(panel[0]->cs_bcast) );
+      }
+      else
+      {
+         panel[0]->cs_bcast = 0.0;
+      }
+      {
+         double _cs_ref = panel[0]->cs_bcast;
+         MPI_Allreduce( MPI_IN_PLACE, &_cs_ref, 1, MPI_DOUBLE,
+                        MPI_MAX, GRID->all_comm );
+         panel[0]->cs_bcast = _cs_ref;
       }
 #endif
       (void) HPL_binit(         panel[0] );
@@ -172,17 +187,25 @@ void HPL_pdgesv0
       if( HPL_SDC_BCAST_VERIFY && panel[0]->sdc_log )
       {
          double cs_recv = 0.0;
+         int _ml2 = ( panel[0]->grid->myrow == panel[0]->prow ?
+                      panel[0]->mp - panel[0]->jb : panel[0]->mp );
+         _ml2 = Mmax( 0, _ml2 );
          HPL_sdc_compute_bcast_checksum( panel[0]->L2, panel[0]->ldl2,
-            panel[0]->L1, panel[0]->jb, panel[0]->DPIV,
+            _ml2, panel[0]->L1, panel[0]->jb, panel[0]->DPIV,
             panel[0]->jb, &cs_recv );
          if( HPL_sdc_verify_checksum( panel[0]->cs_bcast, cs_recv,
                                       HPL_SDC_THRESHOLD ) )
          {
-            HPL_sdc_log_fault( panel[0]->sdc_log, myrank,
+            double dev = panel[0]->cs_bcast - cs_recv;
+            if( dev < 0.0 ) dev = -dev;
+            HPL_sdc_log_fault( &sdc_log_global, myrank,
                panel[0]->grid->myrow, panel[0]->grid->mycol,
                HPL_SDC_FAULT_PANEL_BCAST, j,
                panel[0]->ia, panel[0]->ja,
                panel[0]->cs_bcast, cs_recv );
+            HPL_pwarn( stdout, __LINE__, "HPL_pdgesv0",
+               "SDC detected in panel broadcast at column %d on rank %d (dev=%.3e)",
+               j, myrank, dev );
          }
       }
 #endif

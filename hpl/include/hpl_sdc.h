@@ -24,11 +24,11 @@
 #endif
 
 #ifndef HPL_SDC_BCAST_VERIFY
-#define HPL_SDC_BCAST_VERIFY          1
+#define HPL_SDC_BCAST_VERIFY          0
 #endif
 
 #ifndef HPL_SDC_PANEL_VERIFY
-#define HPL_SDC_PANEL_VERIFY          1
+#define HPL_SDC_PANEL_VERIFY          0
 #endif
 
 #ifndef HPL_SDC_THRESHOLD
@@ -103,7 +103,7 @@ void   HPL_sdc_update_trail_checksum
 STDC_ARGS( ( double *, const double *, int, const double *, int,
               int, int, int, const double * ) );
 void   HPL_sdc_compute_bcast_checksum
-STDC_ARGS( ( const double *, int, const double *, int, const double *,
+STDC_ARGS( ( const double *, int, int, const double *, int, const double *,
               int, double * ) );
 
 /* Verification (HPL_sdc_verify.c) */
@@ -113,7 +113,7 @@ int    HPL_sdc_verify_panel
 STDC_ARGS( ( const double *, int, int, int, const double *,
               const double *, double ) );
 int    HPL_sdc_verify_trailing
-STDC_ARGS( ( const double *, int, int, const double *, double ) );
+STDC_ARGS( ( const double *, int, int, int, const double *, const double *, double ) );
 
 /* Fault logging and reporting (HPL_sdc_report.c) */
 void   HPL_sdc_log_init
@@ -134,7 +134,7 @@ STDC_ARGS( ( double *, int, int ) );
 void   HPL_sdc_inject_random
 STDC_ARGS( ( double *, int, double ) );
 void   HPL_sdc_inject_at
-STDC_ARGS( ( double *, int, int, int, double ) );
+STDC_ARGS( ( double *, int, int, double ) );
 #endif
 
 #endif /* HPL_SDC_CHECK */

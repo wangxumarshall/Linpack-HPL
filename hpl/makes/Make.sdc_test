@@ -1,6 +1,6 @@
 #  
 #  -- High Performance Computing Linpack Benchmark (HPL)                
-#     SDC Detection Module Makefile                                    
+#     SDC Fault Injection Test Module                                  
 #  
 include Make.inc
 #
@@ -12,33 +12,29 @@ INCdep           = \
    $(INCdir)/hpl_pauxil.h $(INCdir)/hpl_panel.h  $(INCdir)/hpl_pfact.h \
    $(INCdir)/hpl_pgesv.h  $(INCdir)/hpl_sdc.h
 #
+## Executable name #####################################################
+#
+xsdc_test        = $(BINdir)/xhpl_sdc_test
+#
 ## Object files ########################################################
 #
-HPL_sdcobj       = \
-   HPL_sdc_checksum.o     HPL_sdc_verify.o       HPL_sdc_report.o       \
-   HPL_sdc_inject.o
+HPL_sdc_test_obj = \
+   HPL_sdc_test.o
 #
 ## Targets #############################################################
 #
-all     : lib 
+all     : texe
 #
-lib     : lib.grd
+texe    : texe.grd
 #
-lib.grd : $(HPL_sdcobj)
-	$(ARCHIVER) $(ARFLAGS) $(HPLlib) $(HPL_sdcobj)
-	$(RANLIB) $(HPLlib)
-	$(TOUCH) lib.grd
+texe.grd: $(HPL_sdc_test_obj) $(HPLlib)
+	$(LINKER) $(LINKFLAGS) -o $(xsdc_test) $(HPL_sdc_test_obj) $(HPL_LIBS) -lm
+	$(TOUCH) texe.grd
 #
 # ######################################################################
 #
-HPL_sdc_checksum.o       : ../HPL_sdc_checksum.c       $(INCdep)
-	$(CC) -o $@ -c $(CCFLAGS)  ../HPL_sdc_checksum.c
-HPL_sdc_verify.o         : ../HPL_sdc_verify.c         $(INCdep)
-	$(CC) -o $@ -c $(CCFLAGS)  ../HPL_sdc_verify.c
-HPL_sdc_report.o         : ../HPL_sdc_report.c         $(INCdep)
-	$(CC) -o $@ -c $(CCFLAGS)  ../HPL_sdc_report.c
-HPL_sdc_inject.o         : ../HPL_sdc_inject.c         $(INCdep)
-	$(CC) -o $@ -c $(CCFLAGS)  ../HPL_sdc_inject.c
+HPL_sdc_test.o     : ../HPL_sdc_test.c     $(INCdep)
+	$(CC) -o $@ -c $(CCFLAGS)  ../HPL_sdc_test.c
 #
 # ######################################################################
 #

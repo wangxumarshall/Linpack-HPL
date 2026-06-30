@@ -173,6 +173,7 @@ void HPL_sdc_compute_bcast_checksum
 (
    const double * L2,
    int            ldl2,
+   int            ml2,
    const double * L1,
    int            jb_l1,
    const double * DPIV,
@@ -180,8 +181,8 @@ void HPL_sdc_compute_bcast_checksum
    double       * cs_out
 )
 #else
-void HPL_sdc_compute_bcast_checksum( L2, ldl2, L1, jb_l1, DPIV, jb, cs_out )
-   const double * L2; int ldl2; const double * L1; int jb_l1;
+void HPL_sdc_compute_bcast_checksum( L2, ldl2, ml2, L1, jb_l1, DPIV, jb, cs_out )
+   const double * L2; int ldl2, ml2; const double * L1; int jb_l1;
    const double * DPIV; int jb; double * cs_out;
 #endif
 {
@@ -189,13 +190,18 @@ void HPL_sdc_compute_bcast_checksum( L2, ldl2, L1, jb_l1, DPIV, jb, cs_out )
  * Purpose
  * =======
  * Compute checksum of the broadcast buffer (L2 + L1 + DPIV).
+ *
+ * L2 holds ml2 rows x jb cols of the panel, laid out with leading
+ * dimension ldl2 (ldl2 >= ml2). We sum only the ml2*jb real panel
+ * entries, NOT the stride padding, so the checksum is independent of
+ * the memory layout and matches across processes with different ldl2.
  */
    double cs = 0.0;
    int i, k;
 
-   /* Checksum L2 (sum all elements) */
+   /* Checksum L2 (sum real panel entries only) */
    for( k = 0; k < jb; k++ )
-      for( i = 0; i < ldl2; i++ )  /* ldl2 = mp or ml2 */
+      for( i = 0; i < ml2; i++ )
          cs += L2[i + k * ldl2];
 
    /* Checksum L1 */

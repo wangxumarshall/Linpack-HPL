@@ -118,21 +118,10 @@ static const char * HPL_sdc_fault_type_str
 }
 
 /*
- * Serialization buffer for a single fault record (for MPI transport)
+ * Serialization is now done per-field (see HPL_sdc_report_and_aggregate),
+ * so no packed structure is needed. Each field is gathered independently
+ * with its proper MPI type, avoiding any alignment/byte-count ambiguity.
  */
-typedef struct {
-   int    mpi_rank;
-   int    grid_row;
-   int    grid_col;
-   int    fault_type;
-   int    step;
-   int    global_row;
-   int    global_col;
-   double cs_expected;
-   double cs_computed;
-   double deviation;
-   char   node_name[HPL_SDC_NODE_NAME_LEN];
-} HPL_T_SDC_FAULT_PACKED;
 
 #ifdef STDC_HEADERS
 void HPL_sdc_report_and_aggregate
@@ -153,14 +142,41 @@ void HPL_sdc_report_and_aggregate( local_log, comm, my_rank )
  * a comprehensive report with per-node and per-type summaries.
  *
  * Communication: one MPI_Allreduce (int) for total count, then
- * MPI_Gatherv for the packed fault records.
+ * per-field MPI_Gatherv. We gather each field independently with
+ * its proper MPI type to avoid any packed-structure alignment /
+ * byte-count ambiguity.
  */
    int total_faults = 0, local_count = local_log->count;
    int nprocs;
    int * counts = NULL, * displs = NULL;
-   HPL_T_SDC_FAULT_PACKED * local_buf = NULL, * all_buf = NULL;
    HPL_T_SDC_FAULT * p;
    int i, idx;
+
+   /* Per-field local buffers */
+   int    * l_mpi_rank   = NULL;
+   int    * l_grid_row   = NULL;
+   int    * l_grid_col   = NULL;
+   int    * l_fault_type = NULL;
+   int    * l_step       = NULL;
+   int    * l_global_row = NULL;
+   int    * l_global_col = NULL;
+   double * l_cs_expected= NULL;
+   double * l_cs_computed= NULL;
+   double * l_deviation  = NULL;
+   char   * l_node_name  = NULL;  /* local_count * NODE_NAME_LEN */
+
+   /* Per-field global buffers (rank 0 only) */
+   int    * g_mpi_rank   = NULL;
+   int    * g_grid_row   = NULL;
+   int    * g_grid_col   = NULL;
+   int    * g_fault_type = NULL;
+   int    * g_step       = NULL;
+   int    * g_global_row = NULL;
+   int    * g_global_col = NULL;
+   double * g_cs_expected= NULL;
+   double * g_cs_computed= NULL;
+   double * g_deviation  = NULL;
+   char   * g_node_name  = NULL;
 
    MPI_Comm_size( comm, &nprocs );
 
@@ -169,35 +185,47 @@ void HPL_sdc_report_and_aggregate( local_log, comm, my_rank )
 
    if( total_faults == 0 ) return;  /* No faults, nothing to report */
 
-   /* Step 2: Pack local faults */
+   /* Step 2: Pack local faults into per-field arrays */
    if( local_count > 0 )
    {
-      local_buf = (HPL_T_SDC_FAULT_PACKED *)malloc(
-         (size_t)local_count * sizeof(HPL_T_SDC_FAULT_PACKED) );
-      if( local_buf )
+      l_mpi_rank    = (int *)   malloc( local_count * sizeof(int) );
+      l_grid_row    = (int *)   malloc( local_count * sizeof(int) );
+      l_grid_col    = (int *)   malloc( local_count * sizeof(int) );
+      l_fault_type  = (int *)   malloc( local_count * sizeof(int) );
+      l_step        = (int *)   malloc( local_count * sizeof(int) );
+      l_global_row  = (int *)   malloc( local_count * sizeof(int) );
+      l_global_col  = (int *)   malloc( local_count * sizeof(int) );
+      l_cs_expected = (double *)malloc( local_count * sizeof(double) );
+      l_cs_computed = (double *)malloc( local_count * sizeof(double) );
+      l_deviation   = (double *)malloc( local_count * sizeof(double) );
+      l_node_name   = (char *)  malloc( (size_t)local_count * HPL_SDC_NODE_NAME_LEN );
+
+      if( l_mpi_rank && l_grid_row && l_grid_col && l_fault_type &&
+          l_step && l_global_row && l_global_col && l_cs_expected &&
+          l_cs_computed && l_deviation && l_node_name )
       {
          p = local_log->head; idx = 0;
          while( p && idx < local_count )
          {
-            local_buf[idx].mpi_rank   = p->mpi_rank;
-            local_buf[idx].grid_row   = p->grid_row;
-            local_buf[idx].grid_col   = p->grid_col;
-            local_buf[idx].fault_type = (int)p->fault_type;
-            local_buf[idx].step       = p->step;
-            local_buf[idx].global_row = p->global_row;
-            local_buf[idx].global_col = p->global_col;
-            local_buf[idx].cs_expected = p->cs_expected;
-            local_buf[idx].cs_computed = p->cs_computed;
-            local_buf[idx].deviation  = p->deviation;
-            strncpy( local_buf[idx].node_name, p->node_name,
-                     HPL_SDC_NODE_NAME_LEN - 1 );
-            local_buf[idx].node_name[HPL_SDC_NODE_NAME_LEN-1] = '\0';
+            l_mpi_rank[idx]    = p->mpi_rank;
+            l_grid_row[idx]    = p->grid_row;
+            l_grid_col[idx]    = p->grid_col;
+            l_fault_type[idx]  = (int)p->fault_type;
+            l_step[idx]        = p->step;
+            l_global_row[idx]  = p->global_row;
+            l_global_col[idx]  = p->global_col;
+            l_cs_expected[idx] = p->cs_expected;
+            l_cs_computed[idx] = p->cs_computed;
+            l_deviation[idx]   = p->deviation;
+            strncpy( l_node_name + idx * HPL_SDC_NODE_NAME_LEN,
+                     p->node_name, HPL_SDC_NODE_NAME_LEN - 1 );
+            l_node_name[ idx * HPL_SDC_NODE_NAME_LEN + HPL_SDC_NODE_NAME_LEN - 1 ] = '\0';
             p = p->next; idx++;
          }
       }
    }
 
-   /* Step 3: Gather counts and displacements */
+   /* Step 3: Gather counts and displacements (in fault records) */
    counts = (int *)malloc( (size_t)nprocs * sizeof(int) );
    displs = (int *)malloc( (size_t)nprocs * sizeof(int) );
 
@@ -207,19 +235,47 @@ void HPL_sdc_report_and_aggregate( local_log, comm, my_rank )
    for( i = 1; i < nprocs; i++ )
       displs[i] = displs[i-1] + counts[i-1];
 
-   /* Step 4: Gather all packed fault records on rank 0 */
-   if( total_faults > 0 )
+   /* Step 4: Allocate global per-field buffers on rank 0 */
+   if( my_rank == 0 && total_faults > 0 )
    {
-      all_buf = (HPL_T_SDC_FAULT_PACKED *)malloc(
-         (size_t)total_faults * sizeof(HPL_T_SDC_FAULT_PACKED) );
+      g_mpi_rank    = (int *)   malloc( total_faults * sizeof(int) );
+      g_grid_row    = (int *)   malloc( total_faults * sizeof(int) );
+      g_grid_col    = (int *)   malloc( total_faults * sizeof(int) );
+      g_fault_type  = (int *)   malloc( total_faults * sizeof(int) );
+      g_step        = (int *)   malloc( total_faults * sizeof(int) );
+      g_global_row  = (int *)   malloc( total_faults * sizeof(int) );
+      g_global_col  = (int *)   malloc( total_faults * sizeof(int) );
+      g_cs_expected = (double *)malloc( total_faults * sizeof(double) );
+      g_cs_computed = (double *)malloc( total_faults * sizeof(double) );
+      g_deviation   = (double *)malloc( total_faults * sizeof(double) );
+      g_node_name   = (char *)  malloc( (size_t)total_faults * HPL_SDC_NODE_NAME_LEN );
    }
 
-   MPI_Gatherv( local_buf, local_count, MPI_BYTE,
-                all_buf, counts, displs, MPI_BYTE,
-                0, comm );
+   /* Step 5: Gather each field independently with correct MPI type */
+   MPI_Gatherv( l_mpi_rank,    local_count, MPI_INT,    g_mpi_rank,    counts, displs, MPI_INT,    0, comm );
+   MPI_Gatherv( l_grid_row,    local_count, MPI_INT,    g_grid_row,    counts, displs, MPI_INT,    0, comm );
+   MPI_Gatherv( l_grid_col,    local_count, MPI_INT,    g_grid_col,    counts, displs, MPI_INT,    0, comm );
+   MPI_Gatherv( l_fault_type,  local_count, MPI_INT,    g_fault_type,  counts, displs, MPI_INT,    0, comm );
+   MPI_Gatherv( l_step,        local_count, MPI_INT,    g_step,        counts, displs, MPI_INT,    0, comm );
+   MPI_Gatherv( l_global_row,  local_count, MPI_INT,    g_global_row,  counts, displs, MPI_INT,    0, comm );
+   MPI_Gatherv( l_global_col,  local_count, MPI_INT,    g_global_col,  counts, displs, MPI_INT,    0, comm );
+   MPI_Gatherv( l_cs_expected, local_count, MPI_DOUBLE, g_cs_expected, counts, displs, MPI_DOUBLE, 0, comm );
+   MPI_Gatherv( l_cs_computed, local_count, MPI_DOUBLE, g_cs_computed, counts, displs, MPI_DOUBLE, 0, comm );
+   MPI_Gatherv( l_deviation,   local_count, MPI_DOUBLE, g_deviation,   counts, displs, MPI_DOUBLE, 0, comm );
+   /* node_name: counts/displs in records, but element is NODE_NAME_LEN bytes */
+   {
+      int * nm_counts = (int *)malloc( (size_t)nprocs * sizeof(int) );
+      int * nm_displs = (int *)malloc( (size_t)nprocs * sizeof(int) );
+      for( i = 0; i < nprocs; i++ ) nm_counts[i] = counts[i] * HPL_SDC_NODE_NAME_LEN;
+      nm_displs[0] = 0;
+      for( i = 1; i < nprocs; i++ ) nm_displs[i] = nm_displs[i-1] + nm_counts[i-1];
+      MPI_Gatherv( l_node_name, local_count * HPL_SDC_NODE_NAME_LEN, MPI_CHAR,
+                   g_node_name, nm_counts, nm_displs, MPI_CHAR, 0, comm );
+      free( nm_counts ); free( nm_displs );
+   }
 
-   /* Step 5: Rank 0 outputs the report */
-   if( my_rank == 0 && all_buf )
+   /* Step 6: Rank 0 outputs the report */
+   if( my_rank == 0 && g_mpi_rank )
    {
       /* Count unique nodes */
       int num_nodes = 0;
@@ -239,35 +295,36 @@ void HPL_sdc_report_and_aggregate( local_log, comm, my_rank )
       {
          HPL_fprintf( stdout, "--- Fault #%d ---\n", i+1 );
          HPL_fprintf( stdout, "  Type:        %s\n",
-            HPL_sdc_fault_type_str( (HPL_T_SDC_FAULT_TYPE)all_buf[i].fault_type ) );
-         HPL_fprintf( stdout, "  Step:        %d\n", all_buf[i].step );
-         HPL_fprintf( stdout, "  MPI Rank:    %d\n", all_buf[i].mpi_rank );
+            HPL_sdc_fault_type_str( (HPL_T_SDC_FAULT_TYPE)g_fault_type[i] ) );
+         HPL_fprintf( stdout, "  Step:        %d\n", g_step[i] );
+         HPL_fprintf( stdout, "  MPI Rank:    %d\n", g_mpi_rank[i] );
          HPL_fprintf( stdout, "  Grid Pos:    (row=%d, col=%d)\n",
-            all_buf[i].grid_row, all_buf[i].grid_col );
-         HPL_fprintf( stdout, "  Node Name:   %s\n", all_buf[i].node_name );
+            g_grid_row[i], g_grid_col[i] );
+         HPL_fprintf( stdout, "  Node Name:   %s\n",
+            g_node_name + i * HPL_SDC_NODE_NAME_LEN );
          HPL_fprintf( stdout, "  Location:    global A[%d, %d]\n",
-            all_buf[i].global_row, all_buf[i].global_col );
-         HPL_fprintf( stdout, "  Deviation:   %.3e\n", all_buf[i].deviation );
+            g_global_row[i], g_global_col[i] );
+         HPL_fprintf( stdout, "  Deviation:   %.3e\n", g_deviation[i] );
          HPL_fprintf( stdout, "  Severity:    %s\n\n",
-            ( all_buf[i].deviation > 1.0e-6 ? "CRITICAL" :
-              all_buf[i].deviation > 1.0e-10 ? "HIGH" : "LOW" ) );
+            ( g_deviation[i] > 1.0e-6 ? "CRITICAL" :
+              g_deviation[i] > 1.0e-10 ? "HIGH" : "LOW" ) );
 
          /* Tally by type */
-         if( all_buf[i].fault_type >= 0 && all_buf[i].fault_type <= 5 )
-            type_counts[all_buf[i].fault_type]++;
+         if( g_fault_type[i] >= 0 && g_fault_type[i] <= 5 )
+            type_counts[g_fault_type[i]]++;
 
          /* Tally by node */
          {
             int found = 0, k;
+            char * nm = g_node_name + i * HPL_SDC_NODE_NAME_LEN;
             for( k = 0; k < num_nodes; k++ )
             {
-               if( strcmp( node_list[k], all_buf[i].node_name ) == 0 )
+               if( strcmp( node_list[k], nm ) == 0 )
                { node_faults[k]++; found = 1; break; }
             }
             if( !found && num_nodes < 256 )
             {
-               strncpy( node_list[num_nodes], all_buf[i].node_name,
-                        HPL_SDC_NODE_NAME_LEN - 1 );
+               strncpy( node_list[num_nodes], nm, HPL_SDC_NODE_NAME_LEN - 1 );
                node_list[num_nodes][HPL_SDC_NODE_NAME_LEN-1] = '\0';
                node_faults[num_nodes] = 1;
                num_nodes++;
@@ -315,10 +372,30 @@ void HPL_sdc_report_and_aggregate( local_log, comm, my_rank )
    }
 
    /* Cleanup */
-   if( local_buf ) free( local_buf );
-   if( all_buf   ) free( all_buf   );
-   if( counts    ) free( counts    );
-   if( displs    ) free( displs    );
+   if( l_mpi_rank )    free( l_mpi_rank );
+   if( l_grid_row )    free( l_grid_row );
+   if( l_grid_col )    free( l_grid_col );
+   if( l_fault_type )  free( l_fault_type );
+   if( l_step )        free( l_step );
+   if( l_global_row )  free( l_global_row );
+   if( l_global_col )  free( l_global_col );
+   if( l_cs_expected ) free( l_cs_expected );
+   if( l_cs_computed ) free( l_cs_computed );
+   if( l_deviation )   free( l_deviation );
+   if( l_node_name )   free( l_node_name );
+   if( g_mpi_rank )    free( g_mpi_rank );
+   if( g_grid_row )    free( g_grid_row );
+   if( g_grid_col )    free( g_grid_col );
+   if( g_fault_type )  free( g_fault_type );
+   if( g_step )        free( g_step );
+   if( g_global_row )  free( g_global_row );
+   if( g_global_col )  free( g_global_col );
+   if( g_cs_expected ) free( g_cs_expected );
+   if( g_cs_computed ) free( g_cs_computed );
+   if( g_deviation )   free( g_deviation );
+   if( g_node_name )   free( g_node_name );
+   if( counts )        free( counts );
+   if( displs )        free( displs );
 }
 
 #ifdef STDC_HEADERS

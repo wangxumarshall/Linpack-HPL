@@ -29,6 +29,8 @@ void HPL_sdc_inject_bitflip( A, index, bit_pos )
    int byte_idx = ( bit_pos / 8 ) % (int)sizeof(double);
    int bit_idx  = bit_pos % 8;
    bytes[byte_idx] ^= (unsigned char)(1 << bit_idx);
+   /* Force compiler to recognise the double modification */
+   { volatile double tmp = A[index]; A[index] = tmp; }
 }
 
 #ifdef STDC_HEADERS

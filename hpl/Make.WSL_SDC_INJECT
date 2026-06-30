@@ -61,7 +61,7 @@ TOUCH        = touch
 # - Platform identifier ------------------------------------------------
 # ----------------------------------------------------------------------
 #
-ARCH         = WSL_OpenBLAS
+ARCH         = WSL_SDC_INJECT
 #
 # ----------------------------------------------------------------------
 # - HPL Directory Structure / HPL library ------------------------------
@@ -100,7 +100,7 @@ HPL_INCLUDES = -I$(INCdir) -I$(INCdir)/$(ARCH) $(LAinc) $(MPinc)
 HPL_LIBS     = $(HPLlib) $(LAlib) $(MPlib)
 #
 # - Compile time options -----------------------------------------------
-HPL_OPTS     = -DHPL_SDC_CHECK -DHPL_SDC_INJECT
+HPL_OPTS     = -DHPL_SDC_CHECK -DHPL_SDC_INJECT -DHPL_SDC_BCAST_VERIFY=1
 #
 HPL_DEFS     = $(F2CDEFS) $(HPL_OPTS) $(HPL_INCLUDES)
 #

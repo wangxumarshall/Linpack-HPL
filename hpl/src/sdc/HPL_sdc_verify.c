@@ -87,12 +87,13 @@ int HPL_sdc_verify_trailing
    int            m,
    int            n,
    const double * cs_expected,
+   const double * weights,
    double         threshold
 )
 #else
-int HPL_sdc_verify_trailing( A, lda, m, n, cs_expected, threshold )
+int HPL_sdc_verify_trailing( A, lda, m, n, cs_expected, weights, threshold )
    const double * A; int lda, m, n;
-   const double * cs_expected; double threshold;
+   const double * cs_expected; const double * weights; double threshold;
 #endif
 {
 /*
@@ -101,8 +102,7 @@ int HPL_sdc_verify_trailing( A, lda, m, n, cs_expected, threshold )
  * Verify trailing matrix checksums by full recomputation from matrix
  * data and comparison against expected (incrementally updated) values.
  *
- * Uses uniform weights (sum of all rows) for simplicity and to avoid
- * issues with pivoting permutations.
+ * Uses the same weights as the checksum computation for consistency.
  *
  * Returns HPL_SUCCESS (0) if match, 1 if mismatch.
  */
@@ -113,7 +113,7 @@ int HPL_sdc_verify_trailing( A, lda, m, n, cs_expected, threshold )
       double s = 0.0;
       int i;
       for( i = 0; i < m; i++ )
-         s += A[i + j * lda];
+         s += weights[i] * A[i + j * lda];
       
       if( HPL_sdc_verify_checksum( cs_expected[j], s, threshold ) )
          return 1;
