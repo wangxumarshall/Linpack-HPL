@@ -113,8 +113,8 @@ int HPL_sdc_verify_trailing( A, lda, m, n, cs_expected, weights, threshold )
       double s = 0.0;
       int i;
       for( i = 0; i < m; i++ )
-         s += weights[i] * A[i + j * lda];
-      
+         s += ( weights ? weights[i] : 1.0 ) * A[i + j * lda];
+
       if( HPL_sdc_verify_checksum( cs_expected[j], s, threshold ) )
          return 1;
    }

@@ -97,8 +97,9 @@ int HPL_pdpanel_free
    if( PANEL->WORK  ) free( PANEL->WORK  );
    if( PANEL->IWORK ) free( PANEL->IWORK );
 #ifdef HPL_SDC_CHECK
-   if( PANEL->CS_PANEL  ) free( PANEL->CS_PANEL  );
-   if( PANEL->CS_WEIGHTS ) free( PANEL->CS_WEIGHTS );
+   if( PANEL->CS_PANEL  ) { free( PANEL->CS_PANEL  ); PANEL->CS_PANEL  = NULL; }
+   if( PANEL->CS_TRAIL  ) { free( PANEL->CS_TRAIL  ); PANEL->CS_TRAIL  = NULL; }
+   if( PANEL->CS_WEIGHTS){ free( PANEL->CS_WEIGHTS); PANEL->CS_WEIGHTS = NULL; }
 #endif
 
    return( MPI_SUCCESS );

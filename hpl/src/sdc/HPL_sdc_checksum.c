@@ -154,7 +154,7 @@ void HPL_sdc_update_trail_checksum( cs_trail, L2, ldl2, U, ldu,
       double s = 0.0;
       for( i = 0; i < mp; i++ )
       {
-         s += weights[i] * L2[i + k * ldl2];
+         s += ( weights ? weights[i] : 1.0 ) * L2[i + k * ldl2];
       }
       cs_l2_ptr[k] = s;
    }

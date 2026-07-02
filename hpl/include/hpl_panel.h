@@ -96,6 +96,8 @@ typedef struct HPL_S_panel
    double              * CS_PANEL;  /* jb checksum values for panel cols */
    double              * CS_WEIGHTS; /* mp weights for checksum computation */
    double                cs_bcast;  /* checksum of broadcast buffer */
+   double              * CS_TRAIL;  /* nq trailing-matrix column checksums */
+   int                   sdc_step;  /* per-panel pdupdate call counter */
 #endif
 #ifdef HPL_CALL_VSIPL
    vsip_block_d        * Ablock;                           /* A block */

@@ -23,6 +23,10 @@
 #define HPL_SDC_BCAST_VERIFY          1
 #endif
 
+#ifndef HPL_SDC_TRAIL_VERIFY
+#define HPL_SDC_TRAIL_VERIFY          0
+#endif
+
 #ifndef HPL_SDC_THRESHOLD
 #define HPL_SDC_THRESHOLD             1.0e-10
 #endif
