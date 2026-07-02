@@ -144,7 +144,23 @@ void HPL_pdupdateTN
    {
       Aptr = PANEL->A;       L2ptr = PANEL->L2;   L1ptr = PANEL->L1;
       ldl2 = PANEL->ldl2;    dpiv  = PANEL->DPIV; ipiv  = PANEL->IWORK;
-      mp   = PANEL->mp - jb; iroff = PANEL->ii;   nq0   = 0; 
+      mp   = PANEL->mp - jb; iroff = PANEL->ii;   nq0   = 0;
+#ifdef HPL_SDC_CHECK
+#if HPL_SDC_TRAIL_VERIFY
+      /* Recompute CS_TRAIL baseline (uniform weights, swap-invariant) */
+      if( PANEL->CS_TRAIL && n > 0 && mp > 0 )
+      {
+         double * _At = Mptr( Aptr, jb, 0, lda );
+         int _jt;
+         for( _jt = 0; _jt < n; _jt++ )
+         {
+            double _s = 0.0; int _it;
+            for( _it = 0; _it < mp; _it++ ) _s += _At[_it + _jt * lda];
+            PANEL->CS_TRAIL[_jt] = _s;
+         }
+      }
+#endif
+#endif
 #ifdef HPL_CALL_VSIPL
 /*
  * Admit the blocks
@@ -201,7 +217,14 @@ void HPL_pdupdateTN
                     jb, -HPL_rone, L2ptr, ldl2, Aptr, lda, HPL_rone,
                     Mptr( Aptr, jb, 0, lda ), lda );
 #endif
-         Aptr = Mptr( Aptr, 0, nn, lda ); nq0 += nn; 
+#ifdef HPL_SDC_CHECK
+#if HPL_SDC_TRAIL_VERIFY
+         if( PANEL->CS_TRAIL )
+            HPL_sdc_update_trail_checksum( PANEL->CS_TRAIL,
+               L2ptr, ldl2, Aptr, lda, mp, jb, nn, NULL, nq0, HplNoTrans );
+#endif
+#endif
+         Aptr = Mptr( Aptr, 0, nn, lda ); nq0 += nn;
 
          (void) HPL_bcast( PBCST, &test ); 
       }
@@ -237,6 +260,13 @@ void HPL_pdupdateTN
          HPL_dgemm( HplColumnMajor, HplNoTrans, HplNoTrans, mp, nn,
                     jb, -HPL_rone, L2ptr, ldl2, Aptr, lda, HPL_rone,
                     Mptr( Aptr, jb, 0, lda ), lda );
+#endif
+#ifdef HPL_SDC_CHECK
+#if HPL_SDC_TRAIL_VERIFY
+         if( PANEL->CS_TRAIL )
+            HPL_sdc_update_trail_checksum( PANEL->CS_TRAIL,
+               L2ptr, ldl2, Aptr, lda, mp, jb, nn, NULL, nq0, HplNoTrans );
+#endif
 #endif
       }
 #ifdef HPL_CALL_VSIPL
@@ -276,6 +306,22 @@ void HPL_pdupdateTN
       Aptr = PANEL->A; L2ptr = PANEL->L2;  L1ptr = PANEL->L1;
       Uptr = PANEL->U; ldl2 = PANEL->ldl2;
       mp   = PANEL->mp - ( curr != 0 ? jb : 0 );
+#ifdef HPL_SDC_CHECK
+#if HPL_SDC_TRAIL_VERIFY
+      /* Recompute CS_TRAIL baseline after distributed row swap */
+      if( PANEL->CS_TRAIL && n > 0 && mp > 0 )
+      {
+         double * _At = ( curr != 0 ? Mptr( PANEL->A, jb, 0, lda ) : PANEL->A );
+         int _jt;
+         for( _jt = 0; _jt < n; _jt++ )
+         {
+            double _s = 0.0; int _it;
+            for( _it = 0; _it < mp; _it++ ) _s += _At[_it + _jt * lda];
+            PANEL->CS_TRAIL[_jt] = _s;
+         }
+      }
+#endif
+#endif
 #ifdef HPL_CALL_VSIPL
 /*
  * Admit the blocks
@@ -325,6 +371,13 @@ void HPL_pdupdateTN
                        jb, -HPL_rone, L2ptr, ldl2, Uptr, LDU, HPL_rone,
                        Mptr( Aptr, jb, 0, lda ), lda );
 #endif
+#ifdef HPL_SDC_CHECK
+#if HPL_SDC_TRAIL_VERIFY
+            if( PANEL->CS_TRAIL )
+               HPL_sdc_update_trail_checksum( PANEL->CS_TRAIL,
+                  L2ptr, ldl2, Uptr, LDU, mp, jb, nn, NULL, nq0, HplNoTrans );
+#endif
+#endif
             HPL_dlacpy( jb, nn, Uptr, LDU, Aptr, lda );
          }
          else
@@ -347,6 +400,13 @@ void HPL_pdupdateTN
             HPL_dgemm( HplColumnMajor, HplNoTrans, HplNoTrans, mp, nn,
                        jb, -HPL_rone, L2ptr, ldl2, Uptr, LDU, HPL_rone,
                        Aptr, lda );
+#endif
+#ifdef HPL_SDC_CHECK
+#if HPL_SDC_TRAIL_VERIFY
+            if( PANEL->CS_TRAIL )
+               HPL_sdc_update_trail_checksum( PANEL->CS_TRAIL,
+                  L2ptr, ldl2, Uptr, LDU, mp, jb, nn, NULL, nq0, HplNoTrans );
+#endif
 #endif
          }
          Uptr = Mptr( Uptr, 0, nn, LDU );
@@ -383,6 +443,13 @@ void HPL_pdupdateTN
                        jb, -HPL_rone, L2ptr, ldl2, Uptr, LDU, HPL_rone,
                        Mptr( Aptr, jb, 0, lda ), lda );
 #endif
+#ifdef HPL_SDC_CHECK
+#if HPL_SDC_TRAIL_VERIFY
+            if( PANEL->CS_TRAIL )
+               HPL_sdc_update_trail_checksum( PANEL->CS_TRAIL,
+                  L2ptr, ldl2, Uptr, LDU, mp, jb, nn, NULL, nq0, HplNoTrans );
+#endif
+#endif
             HPL_dlacpy( jb, nn, Uptr, LDU, Aptr, lda );
          }
          else
@@ -406,6 +473,13 @@ void HPL_pdupdateTN
                        jb, -HPL_rone, L2ptr, ldl2, Uptr, LDU, HPL_rone,
                        Aptr, lda );
 #endif
+#ifdef HPL_SDC_CHECK
+#if HPL_SDC_TRAIL_VERIFY
+            if( PANEL->CS_TRAIL )
+               HPL_sdc_update_trail_checksum( PANEL->CS_TRAIL,
+                  L2ptr, ldl2, Uptr, LDU, mp, jb, nn, NULL, nq0, HplNoTrans );
+#endif
+#endif
          }
       }
 #ifdef HPL_CALL_VSIPL
@@ -428,6 +502,38 @@ void HPL_pdupdateTN
 #endif
    }
 
+#ifdef HPL_SDC_CHECK
+#if HPL_SDC_TRAIL_VERIFY
+   if( PANEL->CS_TRAIL && n > 0 )
+   {
+      PANEL->sdc_step++;
+      {
+         int    _cv = ( PANEL->grid->myrow == PANEL->prow ? 1 : 0 );
+         double * _Av = Mptr( PANEL->A, ( _cv ? jb : 0 ), 0, lda );
+         int    _mv = ( _cv ? PANEL->mp - jb : PANEL->mp );
+         _mv = Mmax( 0, _mv );
+         if( _mv > 0 )
+         {
+            int _fault = HPL_sdc_verify_trailing(
+               _Av, lda, _mv, n, PANEL->CS_TRAIL, NULL, HPL_SDC_THRESHOLD );
+            if( _fault )
+            {
+               int _myrank;
+               MPI_Comm_rank( PANEL->grid->all_comm, &_myrank );
+               HPL_sdc_log_fault( &sdc_log_global, _myrank,
+                  PANEL->grid->myrow, PANEL->grid->mycol,
+                  HPL_SDC_FAULT_TRAIL_UPDATE, PANEL->sdc_step,
+                  PANEL->ia, PANEL->ja, 0.0, 0.0 );
+               HPL_pwarn( stdout, __LINE__, "HPL_pdupdateTN",
+                  "SDC detected in trailing matrix update at "
+                  "step %d (panel ja=%d) on rank %d",
+                  PANEL->sdc_step, PANEL->ja, _myrank );
+            }
+         }
+      }
+   }
+#endif
+#endif
    PANEL->A = Mptr( PANEL->A, 0, n, lda ); PANEL->nq -= n; PANEL->jj += n;
 /*
  * return the outcome of the probe  (should always be  HPL_SUCCESS,  the

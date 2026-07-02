@@ -160,6 +160,31 @@ void HPL_pdgesvK2
  * Factor and broadcast k-th panel
  */
       HPL_pdfact(         panel[k] );
+#ifdef HPL_SDC_CHECK
+#if HPL_SDC_TRAIL_VERIFY
+      /* Defensive pre-fill of CS_TRAIL after factorization */
+      if( panel[k]->CS_TRAIL )
+      {
+         double * _Ai = ( panel[k]->grid->myrow == panel[k]->prow ?
+                      Mptr( panel[k]->A, panel[k]->jb, 0, panel[k]->lda ) :
+                      panel[k]->A );
+         int _mi = ( panel[k]->grid->myrow == panel[k]->prow ?
+                   panel[k]->mp - panel[k]->jb : panel[k]->mp );
+         _mi = Mmax( 0, _mi );
+         if( _mi > 0 && panel[k]->nq > 0 )
+         {
+            int _ji;
+            for( _ji = 0; _ji < panel[k]->nq; _ji++ )
+            {
+               double _s = 0.0; int _ii;
+               for( _ii = 0; _ii < _mi; _ii++ )
+                  _s += _Ai[_ii + _ji * panel[k]->lda];
+               panel[k]->CS_TRAIL[_ji] = _s;
+            }
+         }
+      }
+#endif
+#endif
       (void) HPL_binit(   panel[k] );
 #ifdef HPL_SDC_CHECK
       if( mycol == panel[k]->pcol && panel[k]->CS_PANEL )
@@ -245,6 +270,31 @@ void HPL_pdgesvK2
          for( k = 0; k < depth; k++ )   /* partial updates 0..depth-1 */
             (void) HPL_pdupdate( NULL, NULL, panel[k], nn );
          HPL_pdfact(       panel[depth] );    /* factor current panel */
+#ifdef HPL_SDC_CHECK
+#if HPL_SDC_TRAIL_VERIFY
+         /* Defensive pre-fill of CS_TRAIL after factorization */
+         if( panel[depth]->CS_TRAIL )
+         {
+            double * _Ai = ( panel[depth]->grid->myrow == panel[depth]->prow ?
+                         Mptr( panel[depth]->A, panel[depth]->jb, 0, panel[depth]->lda ) :
+                         panel[depth]->A );
+            int _mi = ( panel[depth]->grid->myrow == panel[depth]->prow ?
+                      panel[depth]->mp - panel[depth]->jb : panel[depth]->mp );
+            _mi = Mmax( 0, _mi );
+            if( _mi > 0 && panel[depth]->nq > 0 )
+            {
+               int _ji;
+               for( _ji = 0; _ji < panel[depth]->nq; _ji++ )
+               {
+                  double _s = 0.0; int _ii;
+                  for( _ii = 0; _ii < _mi; _ii++ )
+                     _s += _Ai[_ii + _ji * panel[depth]->lda];
+                  panel[depth]->CS_TRAIL[_ji] = _s;
+               }
+            }
+         }
+#endif
+#endif
       }
       else { nn = 0; }
           /* binit must be called BEFORE cs_bcast computation: when HPL_COPY_L
@@ -272,13 +322,24 @@ void HPL_pdgesvK2
       MPI_Bcast( &(panel[depth]->cs_bcast), 1, MPI_DOUBLE,
                  icurcol, GRID->row_comm );
 #ifdef HPL_SDC_INJECT
-      if( mycol == icurcol && j == nb && panel[depth]->mp > 1 &&
-          panel[depth]->L2 )
       {
-         HPL_sdc_inject_at( panel[depth]->L2, 1, 0, 1.0e6 );
-         HPL_pwarn( stdout, __LINE__, "HPL_pdgesvK2",
-            "SDC FAULT INJECTED j=%d rank=%d (L2[1] replaced with 1e6)",
-            j, myrank );
+         static int    _sdc_inj_col = -2;
+         static double _sdc_inj_val = 1.0e6;
+         if( _sdc_inj_col == -2 )
+         {
+            char * _ec = getenv("HPL_SDC_INJECT_COL");
+            char * _ev = getenv("HPL_SDC_INJECT_VAL");
+            _sdc_inj_col = _ec ? atoi(_ec) : (int)nb;
+            _sdc_inj_val = _ev ? atof(_ev) : 1.0e6;
+         }
+         if( mycol == icurcol && j == _sdc_inj_col && panel[depth]->mp > 1 &&
+             panel[depth]->L2 )
+         {
+            HPL_sdc_inject_at( panel[depth]->L2, 1, 0, _sdc_inj_val );
+            HPL_pwarn( stdout, __LINE__, "HPL_pdgesvK2",
+               "SDC FAULT INJECTED j=%d rank=%d (L2[1] replaced with %e)",
+               j, myrank, _sdc_inj_val );
+         }
       }
 #endif
 #endif

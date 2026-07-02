@@ -130,6 +130,21 @@ void HPL_pdfact
                        ((size_t)(align) * sizeof(double) ) ) );
    if( vptr ) free( vptr );
 
+#ifdef HPL_SDC_CHECK
+   /* Fill CS_PANEL with panel column checksums after factorization.
+    * L2 now holds the L factor; compute weighted per-column checksums. */
+   if( PANEL->CS_PANEL && PANEL->CS_WEIGHTS && PANEL->L2 )
+   {
+      int _ml2 = ( PANEL->grid->myrow == PANEL->prow ?
+                   PANEL->mp - PANEL->jb : PANEL->mp );
+      _ml2 = Mmax( 0, _ml2 );
+      if( _ml2 > 0 )
+         HPL_sdc_panel_checksum( PANEL->L2, PANEL->ldl2, _ml2,
+                                 PANEL->jb, PANEL->CS_WEIGHTS,
+                                 PANEL->CS_PANEL );
+   }
+#endif
+
    PANEL->A   = Mptr( PANEL->A, 0, jb, PANEL->lda );
    PANEL->nq -= jb; PANEL->jj += jb;
 #ifdef HPL_DETAILED_TIMING

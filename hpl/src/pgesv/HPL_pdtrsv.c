@@ -48,6 +48,9 @@
  * Include files
  */
 #include "hpl.h"
+#ifdef HPL_SDC_CHECK
+#include <math.h>
+#endif
 
 #ifdef STDC_HEADERS
 void HPL_pdtrsv
@@ -293,7 +296,8 @@ void HPL_pdtrsv
  */
    {
       double cs_x = 0.0;
-      int _i;
+      double _mean = 0.0, _var = 0.0, _std = 0.0;
+      int _i, _outliers = 0;
       for( _i = 0; _i < Anq; _i++ ) cs_x += XR[_i];
       /* Check for NaN/Inf in solution */
       if( cs_x != cs_x || cs_x > 1.0e300 || cs_x < -1.0e300 )
@@ -307,6 +311,39 @@ void HPL_pdtrsv
          HPL_pwarn( stdout, __LINE__, "HPL_pdtrsv",
             "SDC suspected in back substitution: solution checksum anomalous"
             " on rank %d (cs=%e)", _myrank, cs_x );
+      }
+      /* Statistical anomaly detection: outliers beyond 6-sigma */
+      if( Anq > 1 )
+      {
+         _mean = cs_x / (double)Anq;
+         for( _i = 0; _i < Anq; _i++ )
+         {
+            double _d = XR[_i] - _mean;
+            _var += _d * _d;
+         }
+         _var /= (double)( Anq - 1 );
+         _std = sqrt( _var );
+         if( _std > 0.0 )
+         {
+            for( _i = 0; _i < Anq; _i++ )
+            {
+               double _z = fabs( XR[_i] - _mean ) / _std;
+               if( _z > 6.0 ) _outliers++;
+            }
+            if( _outliers > 0 )
+            {
+               int _myrank;
+               MPI_Comm_rank( GRID->all_comm, &_myrank );
+               HPL_sdc_log_fault( &sdc_log_global, _myrank,
+                  GRID->myrow, GRID->mycol,
+                  HPL_SDC_FAULT_BACK_SOLVE, AMAT->n,
+                  0, 0, _mean, (double)_outliers );
+               HPL_pwarn( stdout, __LINE__, "HPL_pdtrsv",
+                  "SDC suspected in back substitution: %d solution outliers"
+                  " beyond 6-sigma on rank %d (mean=%e, std=%e)",
+                  _outliers, _myrank, _mean, _std );
+            }
+         }
       }
    }
 #endif
