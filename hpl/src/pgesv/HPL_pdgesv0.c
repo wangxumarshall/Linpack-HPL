@@ -99,7 +99,6 @@ void HPL_pdgesv0
    int                        N, j, jb, n, nb, tag=MSGID_BEGIN_FACT,
                               test=HPL_KEEP_TESTING;
 #ifdef HPL_SDC_CHECK
-   HPL_T_SDC_LOG              sdc_log_global;
    int                        myrank;
 #endif
 #ifdef HPL_PROGRESS_REPORT
@@ -153,10 +152,8 @@ void HPL_pdgesv0
  * Factor and broadcast current panel - update
  */
       HPL_pdfact(               panel[0] );
+      (void) HPL_binit(         panel[0] );
 #ifdef HPL_SDC_CHECK
-      /* Compute broadcast checksum. Only the owner column holds the real
-       * panel data in L2; propagate the reference value to all processes
-       * via MPI_Allreduce(MAX) so the post-bcast verification is correct. */
       if( GRID->mycol == panel[0]->pcol && panel[0]->CS_PANEL )
       {
          int _ml2 = ( panel[0]->grid->myrow == panel[0]->prow ?
@@ -170,21 +167,15 @@ void HPL_pdgesv0
       {
          panel[0]->cs_bcast = 0.0;
       }
-      {
-         double _cs_ref = panel[0]->cs_bcast;
-         MPI_Allreduce( MPI_IN_PLACE, &_cs_ref, 1, MPI_DOUBLE,
-                        MPI_MAX, GRID->all_comm );
-         panel[0]->cs_bcast = _cs_ref;
-      }
+      MPI_Bcast( &(panel[0]->cs_bcast), 1, MPI_DOUBLE,
+                 panel[0]->pcol, GRID->row_comm );
 #endif
-      (void) HPL_binit(         panel[0] );
       do
       { (void) HPL_bcast(       panel[0], &test ); }
       while( test != HPL_SUCCESS );
       (void) HPL_bwait(         panel[0] );
 #ifdef HPL_SDC_CHECK
-      /* Verify broadcast */
-      if( HPL_SDC_BCAST_VERIFY && panel[0]->sdc_log )
+      if( HPL_SDC_BCAST_VERIFY )
       {
          double cs_recv = 0.0;
          int _ml2 = ( panel[0]->grid->myrow == panel[0]->prow ?

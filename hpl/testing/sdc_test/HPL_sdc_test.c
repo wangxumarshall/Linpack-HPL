@@ -411,7 +411,7 @@ test_trail_checksum_update( void )
 
    /* Incrementally update the checksum */
    HPL_sdc_update_trail_checksum( cs_trail, L2, 4, U, 2,
-                                  4, 2, 4, w );
+                                  4, 2, 4, w, 0, HplNoTrans );
 
    /* Compute reference checksums of A AFTER update */
    for( j = 0; j < 4; j++ )

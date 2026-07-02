@@ -100,7 +100,6 @@ void HPL_pdgesvK2
                               k, mycol, n, nb, nn, npcol, nq,
                               tag=MSGID_BEGIN_FACT, test=HPL_KEEP_TESTING;
 #ifdef HPL_SDC_CHECK
-   HPL_T_SDC_LOG              sdc_log_global;
    int                        myrank;
 #endif
 #ifdef HPL_PROGRESS_REPORT
@@ -162,10 +161,53 @@ void HPL_pdgesvK2
  */
       HPL_pdfact(         panel[k] );
       (void) HPL_binit(   panel[k] );
+#ifdef HPL_SDC_CHECK
+      if( mycol == panel[k]->pcol && panel[k]->CS_PANEL )
+      {
+         int _ml2 = ( panel[k]->grid->myrow == panel[k]->prow ?
+                      panel[k]->mp - panel[k]->jb : panel[k]->mp );
+         _ml2 = Mmax( 0, _ml2 );
+         HPL_sdc_compute_bcast_checksum( panel[k]->L2, panel[k]->ldl2,
+            _ml2, panel[k]->L1, panel[k]->jb, panel[k]->DPIV,
+            panel[k]->jb, &(panel[k]->cs_bcast) );
+      }
+      else
+      {
+         panel[k]->cs_bcast = 0.0;
+      }
+      MPI_Bcast( &(panel[k]->cs_bcast), 1, MPI_DOUBLE,
+                 panel[k]->pcol, GRID->row_comm );
+#endif
       do
       { (void) HPL_bcast( panel[k], &test ); }
       while( test != HPL_SUCCESS );
       (void) HPL_bwait(   panel[k] );
+#ifdef HPL_SDC_CHECK
+      if( HPL_SDC_BCAST_VERIFY )
+      {
+         double cs_recv = 0.0;
+         int _ml2 = ( panel[k]->grid->myrow == panel[k]->prow ?
+                      panel[k]->mp - panel[k]->jb : panel[k]->mp );
+         _ml2 = Mmax( 0, _ml2 );
+         HPL_sdc_compute_bcast_checksum( panel[k]->L2, panel[k]->ldl2,
+            _ml2, panel[k]->L1, panel[k]->jb, panel[k]->DPIV,
+            panel[k]->jb, &cs_recv );
+         if( HPL_sdc_verify_checksum( panel[k]->cs_bcast, cs_recv,
+                                      HPL_SDC_THRESHOLD ) )
+         {
+            double dev = panel[k]->cs_bcast - cs_recv;
+            if( dev < 0.0 ) dev = -dev;
+            HPL_sdc_log_fault( &sdc_log_global, myrank,
+               panel[k]->grid->myrow, panel[k]->grid->mycol,
+               HPL_SDC_FAULT_PANEL_BCAST, j,
+               panel[k]->ia, panel[k]->ja,
+               panel[k]->cs_bcast, cs_recv );
+            HPL_pwarn( stdout, __LINE__, "HPL_pdgesvK2",
+               "SDC detected in initial panel broadcast at column %d (k=%d) on rank %d (dev=%.3e)",
+               j, k, myrank, dev );
+         }
+      }
+#endif
 /*
  * Partial update of the depth-k-1 panels in front of me
  */
@@ -203,27 +245,17 @@ void HPL_pdgesvK2
          for( k = 0; k < depth; k++ )   /* partial updates 0..depth-1 */
             (void) HPL_pdupdate( NULL, NULL, panel[k], nn );
          HPL_pdfact(       panel[depth] );    /* factor current panel */
-#ifdef HPL_SDC_CHECK
-         /* Compute panel checksum after factorization */
-         if( panel[depth]->CS_PANEL && panel[depth]->CS_WEIGHTS )
-         {
-            HPL_sdc_panel_checksum( panel[depth]->L2, panel[depth]->ldl2,
-               ( panel[depth]->grid->myrow == panel[depth]->prow ?
-                 panel[depth]->mp - panel[depth]->jb : panel[depth]->mp ),
-               panel[depth]->jb, panel[depth]->CS_WEIGHTS,
-               panel[depth]->CS_PANEL );
-         }
-#endif
       }
       else { nn = 0; }
+          /* binit must be called BEFORE cs_bcast computation: when HPL_COPY_L
+           * is enabled, binit invokes HPL_copyL which fills L2 from A. */
+      (void) HPL_binit( panel[depth] );
 #ifdef HPL_SDC_CHECK
-      /* Compute broadcast buffer checksum before broadcast.
-       * Only the owner column (mycol == icurcol) holds the real panel
-       * data in L2; non-owner columns have L2 pointing at the WORK
-       * buffer with stale content. We compute cs_bcast only on the
-       * owner column, then propagate it to all processes via
-       * MPI_Allreduce(MAX) so every process has the same reference
-       * value for the post-bcast verification. */
+/*
+ * Compute broadcast buffer checksum after binit (L2 is now filled).
+ * Only owner column processes have valid L2 data; others set cs_bcast=0.
+ * Use MPI_Bcast within each process row to propagate reference from icurcol.
+ */
       if( mycol == icurcol && panel[depth]->CS_PANEL )
       {
          int _ml2 = ( panel[depth]->grid->myrow == panel[depth]->prow ?
@@ -237,26 +269,12 @@ void HPL_pdgesvK2
       {
          panel[depth]->cs_bcast = 0.0;
       }
-      /* Propagate reference checksum from owner column to all processes.
-       * Owner column computed the real value; others have 0. MAX yields
-       * the real value everywhere (checksum magnitude is positive). */
-      {
-         double _cs_ref = panel[depth]->cs_bcast;
-         MPI_Allreduce( MPI_IN_PLACE, &_cs_ref, 1, MPI_DOUBLE,
-                        MPI_MAX, GRID->all_comm );
-         panel[depth]->cs_bcast = _cs_ref;
-      }
+      MPI_Bcast( &(panel[depth]->cs_bcast), 1, MPI_DOUBLE,
+                 icurcol, GRID->row_comm );
 #ifdef HPL_SDC_INJECT
-      /* --- Fault injection point (demo only) ---
-       * Inject a single-bit flip into the panel L2 buffer of the column
-       * owner, exactly once at the second panel step (j == nb). The
-       * subsequent HPL_SDC_BCAST_VERIFY recomputes the checksum and will
-       * catch the deviation. */
       if( mycol == icurcol && j == nb && panel[depth]->mp > 1 &&
           panel[depth]->L2 )
       {
-         /* Replace L2[1] with a large value to simulate a stuck-at / SEU
-          * fault that produces a clearly detectable checksum deviation. */
          HPL_sdc_inject_at( panel[depth]->L2, 1, 0, 1.0e6 );
          HPL_pwarn( stdout, __LINE__, "HPL_pdgesvK2",
             "SDC FAULT INJECTED j=%d rank=%d (L2[1] replaced with 1e6)",
@@ -265,12 +283,11 @@ void HPL_pdgesvK2
 #endif
 #endif
           /* Finish the latest update and broadcast the current panel */
-      (void) HPL_binit( panel[depth] );
       HPL_pdupdate( panel[depth], &test, panel[0], nq-nn );
       (void) HPL_bwait( panel[depth] );
 #ifdef HPL_SDC_CHECK
       /* Verify broadcast integrity */
-      if( HPL_SDC_BCAST_VERIFY && panel[depth]->sdc_log )
+      if( HPL_SDC_BCAST_VERIFY )
       {
          double cs_recv = 0.0;
          int _ml2 = ( panel[depth]->grid->myrow == panel[depth]->prow ?
@@ -292,36 +309,6 @@ void HPL_pdgesvK2
             HPL_pwarn( stdout, __LINE__, "HPL_pdgesvK2",
                "SDC detected in panel broadcast at column %d on rank %d (dev=%.3e)",
                j, myrank, dev );
-         }
-      }
-      /* Periodic full verification of trailing matrix */
-      if( 0 && panel[depth]->sdc_log )
-      {
-         panel[depth]->sdc_step++;
-         if( panel[depth]->sdc_step % HPL_SDC_VERIFY_EVERY_K_STEPS == 0 )
-         {
-            if( panel[depth]->CS_TRAIL && panel[depth]->A )
-            {
-               int trail_m = panel[depth]->mp;
-               int trail_n = panel[depth]->nq;
-               if( trail_m > 0 && trail_n > 0 )
-               {
-                  if( HPL_sdc_verify_trailing( panel[depth]->A,
-                     panel[depth]->lda, trail_m, trail_n,
-                     panel[depth]->CS_TRAIL, panel[depth]->CS_WEIGHTS,
-                     HPL_SDC_THRESHOLD ) )
-                  {
-                     HPL_sdc_log_fault( panel[depth]->sdc_log, myrank,
-                        panel[depth]->grid->myrow, panel[depth]->grid->mycol,
-                        HPL_SDC_FAULT_TRAIL_UPDATE, j,
-                        panel[depth]->ia, panel[depth]->ja,
-                        0.0, 0.0 );
-                     HPL_pwarn( stdout, __LINE__, "HPL_pdgesvK2",
-                        "SDC detected in trailing matrix at column %d rank %d",
-                        j, myrank );
-                  }
-               }
-            }
          }
       }
 #endif

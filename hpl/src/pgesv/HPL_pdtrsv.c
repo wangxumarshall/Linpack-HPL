@@ -300,6 +300,10 @@ void HPL_pdtrsv
       {
          int _myrank;
          MPI_Comm_rank( GRID->all_comm, &_myrank );
+         HPL_sdc_log_fault( &sdc_log_global, _myrank,
+            GRID->myrow, GRID->mycol,
+            HPL_SDC_FAULT_BACK_SOLVE, AMAT->n,
+            0, 0, 0.0, cs_x );
          HPL_pwarn( stdout, __LINE__, "HPL_pdtrsv",
             "SDC suspected in back substitution: solution checksum anomalous"
             " on rank %d (cs=%e)", _myrank, cs_x );

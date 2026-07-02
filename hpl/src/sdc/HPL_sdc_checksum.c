@@ -25,7 +25,7 @@ void HPL_sdc_init_weights( w, n )
    int i;
    for( i = 0; i < n; i++ )
    {
-      w[i] = (double)( 1 << ( i % HPL_SDC_WEIGHT_WINDOW ) );
+      w[i] = (double)( 1U << ( i % HPL_SDC_WEIGHT_WINDOW ) );
    }
 }
 
@@ -108,13 +108,16 @@ void HPL_sdc_update_trail_checksum
    int            mp,
    int            jb,
    int            nn,
-   const double * weights
+   const double * weights,
+   int            cs_off,
+   int            transa
 )
 #else
 void HPL_sdc_update_trail_checksum( cs_trail, L2, ldl2, U, ldu,
-                                     mp, jb, nn, weights )
+                                     mp, jb, nn, weights, cs_off, transa )
    double * cs_trail; const double * L2; int ldl2;
    const double * U; int ldu, mp, jb, nn; const double * weights;
+   int cs_off, transa;
 #endif
 {
 /*
@@ -122,14 +125,17 @@ void HPL_sdc_update_trail_checksum( cs_trail, L2, ldl2, U, ldu,
  * =======
  * Incremental checksum update for trailing matrix update A -= L2 * U.
  *
- * cs_trail[j] -= sum_k cs_L2[k] * U[k][j]
+ * cs_trail[cs_off+j] -= sum_k cs_L2[k] * U[k][j]
  * where cs_L2[k] = sum_i w[i] * L2[i][k]
+ *
+ * transa == HplNoTrans: U is jb x nn col-major, access U[k + j*ldu]
+ * transa == HplTrans:   U is nn x jb col-major, access U[j + k*ldu]
  *
  * Cost: O(mp*jb + jb*nn) vs main dgemm O(mp*jb*nn)
  * Overhead ratio: ~1/min(mp,nn) << 1
  */
    int i, j, k;
-   double cs_L2[512];  /* stack buffer; jb typically <= 512 */
+   double cs_L2[512];
    double * cs_l2_ptr;
    int    alloc = 0;
 
@@ -143,7 +149,6 @@ void HPL_sdc_update_trail_checksum( cs_trail, L2, ldl2, U, ldu,
       cs_l2_ptr = cs_L2;
    }
 
-   /* Compute checksum of each L2 column */
    for( k = 0; k < jb; k++ )
    {
       double s = 0.0;
@@ -154,15 +159,29 @@ void HPL_sdc_update_trail_checksum( cs_trail, L2, ldl2, U, ldu,
       cs_l2_ptr[k] = s;
    }
 
-   /* Update trailing checksum: cs_trail[j] -= sum_k cs_L2[k] * U[k][j] */
-   for( j = 0; j < nn; j++ )
+   if( transa == HplTrans )
    {
-      double upd = 0.0;
-      for( k = 0; k < jb; k++ )
+      for( j = 0; j < nn; j++ )
       {
-         upd += cs_l2_ptr[k] * U[k + j * ldu];
+         double upd = 0.0;
+         for( k = 0; k < jb; k++ )
+         {
+            upd += cs_l2_ptr[k] * U[j + k * ldu];
+         }
+         cs_trail[cs_off + j] -= upd;
       }
-      cs_trail[j] -= upd;
+   }
+   else
+   {
+      for( j = 0; j < nn; j++ )
+      {
+         double upd = 0.0;
+         for( k = 0; k < jb; k++ )
+         {
+            upd += cs_l2_ptr[k] * U[k + j * ldu];
+         }
+         cs_trail[cs_off + j] -= upd;
+      }
    }
 
    if( alloc ) free( cs_l2_ptr );

@@ -99,6 +99,9 @@ void HPL_pdgesvK1
    int                        N, depth, icurcol=0, j, jb, jj=0, jstart,
                               k, mycol, n, nb, nn, npcol, nq,
                               tag=MSGID_BEGIN_FACT, test=HPL_KEEP_TESTING;
+#ifdef HPL_SDC_CHECK
+   int                        myrank;
+#endif
 #ifdef HPL_PROGRESS_REPORT
    double start_time, time, gflops;
 #endif
@@ -110,6 +113,11 @@ void HPL_pdgesvK1
    N     = A->n;        nb           = A->nb; 
 
    if( N <= 0 ) return;
+
+#ifdef HPL_SDC_CHECK
+   MPI_Comm_rank( GRID->all_comm, &myrank );
+   HPL_sdc_log_init( &sdc_log_global, GRID->all_comm );
+#endif
 
 #ifdef HPL_PROGRESS_REPORT
    start_time = HPL_timer_walltime();
@@ -147,10 +155,53 @@ void HPL_pdgesvK1
  */
       HPL_pdfact(         panel[k] );
       (void) HPL_binit(   panel[k] );
+#ifdef HPL_SDC_CHECK
+      if( mycol == panel[k]->pcol && panel[k]->CS_PANEL )
+      {
+         int _ml2 = ( panel[k]->grid->myrow == panel[k]->prow ?
+                      panel[k]->mp - panel[k]->jb : panel[k]->mp );
+         _ml2 = Mmax( 0, _ml2 );
+         HPL_sdc_compute_bcast_checksum( panel[k]->L2, panel[k]->ldl2,
+            _ml2, panel[k]->L1, panel[k]->jb, panel[k]->DPIV,
+            panel[k]->jb, &(panel[k]->cs_bcast) );
+      }
+      else
+      {
+         panel[k]->cs_bcast = 0.0;
+      }
+      MPI_Bcast( &(panel[k]->cs_bcast), 1, MPI_DOUBLE,
+                 panel[k]->pcol, GRID->row_comm );
+#endif
       do
       { (void) HPL_bcast( panel[k], &test ); }
       while( test != HPL_SUCCESS );
       (void) HPL_bwait(   panel[k] );
+#ifdef HPL_SDC_CHECK
+      if( HPL_SDC_BCAST_VERIFY )
+      {
+         double cs_recv = 0.0;
+         int _ml2 = ( panel[k]->grid->myrow == panel[k]->prow ?
+                      panel[k]->mp - panel[k]->jb : panel[k]->mp );
+         _ml2 = Mmax( 0, _ml2 );
+         HPL_sdc_compute_bcast_checksum( panel[k]->L2, panel[k]->ldl2,
+            _ml2, panel[k]->L1, panel[k]->jb, panel[k]->DPIV,
+            panel[k]->jb, &cs_recv );
+         if( HPL_sdc_verify_checksum( panel[k]->cs_bcast, cs_recv,
+                                      HPL_SDC_THRESHOLD ) )
+         {
+            double dev = panel[k]->cs_bcast - cs_recv;
+            if( dev < 0.0 ) dev = -dev;
+            HPL_sdc_log_fault( &sdc_log_global, myrank,
+               panel[k]->grid->myrow, panel[k]->grid->mycol,
+               HPL_SDC_FAULT_PANEL_BCAST, j,
+               panel[k]->ia, panel[k]->ja,
+               panel[k]->cs_bcast, cs_recv );
+            HPL_pwarn( stdout, __LINE__, "HPL_pdgesvK1",
+               "SDC detected in initial panel broadcast at column %d (k=%d) on rank %d (dev=%.3e)",
+               j, k, myrank, dev );
+         }
+      }
+#endif
 /*
  * Partial update of the depth-1-k panels in front of me
  */
@@ -189,10 +240,71 @@ void HPL_pdgesvK1
          HPL_pdfact(    panel[depth] );       /* factor current panel */
       }
       else { nn = 0; }
-          /* Finish the latest update and broadcast the current panel */
+          /* binit must be called BEFORE cs_bcast computation: when HPL_COPY_L
+           * is enabled, binit invokes HPL_copyL which fills L2 from A. */
       (void) HPL_binit( panel[depth] );
+#ifdef HPL_SDC_CHECK
+/*
+ * Compute broadcast buffer checksum after binit (L2 is now filled).
+ * Only owner column processes have valid L2 data; others set cs_bcast=0.
+ * Use MPI_Bcast within each process row to propagate reference from icurcol.
+ */
+      if( mycol == icurcol && panel[depth]->CS_PANEL )
+      {
+         int _ml2 = ( panel[depth]->grid->myrow == panel[depth]->prow ?
+                      panel[depth]->mp - panel[depth]->jb : panel[depth]->mp );
+         _ml2 = Mmax( 0, _ml2 );
+         HPL_sdc_compute_bcast_checksum( panel[depth]->L2, panel[depth]->ldl2,
+            _ml2, panel[depth]->L1, panel[depth]->jb, panel[depth]->DPIV,
+            panel[depth]->jb, &(panel[depth]->cs_bcast) );
+      }
+      else
+      {
+         panel[depth]->cs_bcast = 0.0;
+      }
+      MPI_Bcast( &(panel[depth]->cs_bcast), 1, MPI_DOUBLE,
+                 icurcol, GRID->row_comm );
+#ifdef HPL_SDC_INJECT
+      if( mycol == icurcol && j == nb && panel[depth]->mp > 1 &&
+          panel[depth]->L2 )
+      {
+         HPL_sdc_inject_at( panel[depth]->L2, 1, 0, 1.0e6 );
+         HPL_pwarn( stdout, __LINE__, "HPL_pdgesvK1",
+            "SDC FAULT INJECTED j=%d rank=%d (L2[1] replaced with 1e6)",
+            j, myrank );
+      }
+#endif
+#endif
+          /* Finish the latest update and broadcast the current panel */
       HPL_pdupdate(     panel[depth], &test, panel[0], nq-nn );
       (void) HPL_bwait( panel[depth] );
+#ifdef HPL_SDC_CHECK
+      /* Verify broadcast integrity */
+      if( HPL_SDC_BCAST_VERIFY )
+      {
+         double cs_recv = 0.0;
+         int _ml2 = ( panel[depth]->grid->myrow == panel[depth]->prow ?
+                      panel[depth]->mp - panel[depth]->jb : panel[depth]->mp );
+         _ml2 = Mmax( 0, _ml2 );
+         HPL_sdc_compute_bcast_checksum( panel[depth]->L2, panel[depth]->ldl2,
+            _ml2, panel[depth]->L1, panel[depth]->jb, panel[depth]->DPIV,
+            panel[depth]->jb, &cs_recv );
+         if( HPL_sdc_verify_checksum( panel[depth]->cs_bcast, cs_recv,
+                                      HPL_SDC_THRESHOLD ) )
+         {
+            double dev = panel[depth]->cs_bcast - cs_recv;
+            if( dev < 0.0 ) dev = -dev;
+            HPL_sdc_log_fault( &sdc_log_global, myrank,
+               panel[depth]->grid->myrow, panel[depth]->grid->mycol,
+               HPL_SDC_FAULT_PANEL_BCAST, j,
+               panel[depth]->ia, panel[depth]->ja,
+               panel[depth]->cs_bcast, cs_recv );
+            HPL_pwarn( stdout, __LINE__, "HPL_pdgesvK1",
+               "SDC detected in panel broadcast at column %d on rank %d (dev=%.3e)",
+               j, myrank, dev );
+         }
+      }
+#endif
 /*
  * Release latest panel resources - circular  of the panel pointers
  * Go to the next process row and column -  update  the message ids  for
@@ -216,6 +328,11 @@ void HPL_pdgesvK1
    }
  
    if( panel ) free( panel );
+#ifdef HPL_SDC_CHECK
+   /* Aggregate and report SDC faults from all processes */
+   HPL_sdc_report_and_aggregate( &sdc_log_global, GRID->all_comm, myrank );
+   HPL_sdc_log_cleanup( &sdc_log_global );
+#endif
 /*
  * End of HPL_pdgesvK1
  */

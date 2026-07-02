@@ -1,0 +1,14 @@
+# IDE / Editors
+.trae/
+.vscode/
+.idea/
+
+# Build artifacts
+hpl/bin/
+hpl/lib/
+WSL_OpenBLAS/
+WSL_OpenMPI/
+WSL_SDC_CHECK_ONLY/
+WSL_SDC_INJECT/
+*.o
+*.a

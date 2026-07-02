@@ -19,16 +19,8 @@
  * SDC configuration defaults (can be overridden at compile time)
  * ---------------------------------------------------------------------
  */
-#ifndef HPL_SDC_VERIFY_EVERY_K_STEPS
-#define HPL_SDC_VERIFY_EVERY_K_STEPS  8
-#endif
-
 #ifndef HPL_SDC_BCAST_VERIFY
-#define HPL_SDC_BCAST_VERIFY          0
-#endif
-
-#ifndef HPL_SDC_PANEL_VERIFY
-#define HPL_SDC_PANEL_VERIFY          0
+#define HPL_SDC_BCAST_VERIFY          1
 #endif
 
 #ifndef HPL_SDC_THRESHOLD
@@ -86,6 +78,9 @@ typedef struct HPL_S_SDC_LOG
    char              node_name[HPL_SDC_NODE_NAME_LEN];
 } HPL_T_SDC_LOG;
 
+extern HPL_T_SDC_LOG HPL_sdc_global_log;
+#define sdc_log_global HPL_sdc_global_log
+
 /*
  * ---------------------------------------------------------------------
  * Function prototypes
@@ -101,7 +96,7 @@ void   HPL_sdc_panel_checksum
 STDC_ARGS( ( const double *, int, int, int, const double *, double * ) );
 void   HPL_sdc_update_trail_checksum
 STDC_ARGS( ( double *, const double *, int, const double *, int,
-              int, int, int, const double * ) );
+              int, int, int, const double *, int, int ) );
 void   HPL_sdc_compute_bcast_checksum
 STDC_ARGS( ( const double *, int, int, const double *, int, const double *,
               int, double * ) );

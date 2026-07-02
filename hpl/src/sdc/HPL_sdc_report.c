@@ -12,6 +12,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Global SDC fault log accessible across all HPL routines */
+HPL_T_SDC_LOG HPL_sdc_global_log;
+
 #ifdef STDC_HEADERS
 void HPL_sdc_log_init
 (
