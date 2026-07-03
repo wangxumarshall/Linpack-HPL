@@ -74,7 +74,7 @@ Linpack-HPL/
 
 - 块大小 $NB$：矩阵被切分为 $NB \times NB$ 的数据块
 - 分布方式：第 $(i, j)$ 个数据块分配给网格位置 $(i \bmod P, j \bmod Q)$ 的进程
-- 本地矩阵维度： $mp = \text{HPL\_numroc}(N, NB, NB, myrow, 0, P)$，$nq = \text{HPL\_numroc}(N+1, NB, NB, mycol, 0, Q)$
+- 本地矩阵维度： $mp = \text{HPL\_numroc}(N, NB, NB, myrow, 0, P)$，$nq = \text{HPL\_numroc}(N+1, NB, NB, mycol, 0, Q)$ 
 
 处理器网格通过 `HPL_grid_init()`（[hpl/src/grid/HPL_grid_init.c](hpl/src/grid/HPL_grid_init.c)）创建，使用 `MPI_Comm_split` 生成行通信器 `row_comm`、列通信器 `col_comm` 和全局通信器 `all_comm`。
 
