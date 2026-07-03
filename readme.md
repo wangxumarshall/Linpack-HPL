@@ -2,13 +2,13 @@
 
 ## 一、项目概述
 
-**HPL（High Performance Computing Linpack）** 是国际标准的高性能计算机浮点性能基准测试工具，由 University of Tennessee 开发（v2.3）。它通过求解大规模稠密线性方程组 $Ax = b$（双精度 64 位浮点运算）来衡量分布式内存系统的浮点计算性能。
+**HPL（High Performance Computing Linpack）** 是国际标准的高性能计算机浮点性能基准测试工具，由 University of Tennessee 开发（最新v2.3）。它通过求解大规模稠密线性方程组 $Ax = b$（双精度 64 位浮点运算）来衡量分布式内存系统的浮点计算性能。
 
 **性能计算公式**：
 
 $$R = \frac{\frac{2}{3}N^3 + \frac{3}{2}N^2}{T}$$
 
-其中 $N$ 为矩阵维度，$T$ 为求解时间（秒），$R$ 的单位为 FLOPS。
+其中 $N$ 为矩阵维度， $T$ 为求解时间（秒），$R$ 的单位为 FLOPS。
 
 **本项目增强**：在原版 HPL 基础上，新增了 **SDC（Silent Data Corruption，静默数据损坏）** 检测模块。SDC 是指宇宙射线或硬件静默故障引发的内存/寄存器比特翻转，传统 HPL 仅在求解结束后通过残差检验判断"是否出错"，无法定位故障发生的时间与节点。本增强模块基于 ABFT（Algorithm-Based Fault Tolerance）思想，在 LU 分解的关键路径上插入校验和检测点，实现运行时实时检测与节点级故障定位。
 
