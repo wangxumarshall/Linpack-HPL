@@ -190,7 +190,7 @@ void HPL_pdupdateTT
             for( _jt = 0; _jt < nn; _jt++ )
             {
                double _s = 0.0; int _it;
-               for( _it = 0; _it < mp; _it++ ) _s += _At[_it + _jt * lda];
+               for( _it = 0; _it < mp; _it++ ) _s += ( PANEL->CS_WEIGHTS ? PANEL->CS_WEIGHTS[_it] : 1.0 ) * _At[_it + _jt * lda];
                PANEL->CS_TRAIL[nq0 + _jt] = _s;
             }
          }
@@ -221,7 +221,7 @@ void HPL_pdupdateTT
 #if HPL_SDC_TRAIL_VERIFY
          if( PANEL->CS_TRAIL )
             HPL_sdc_update_trail_checksum( PANEL->CS_TRAIL,
-               L2ptr, ldl2, Aptr, lda, mp, jb, nn, NULL, nq0, HplNoTrans );
+               L2ptr, ldl2, Aptr, lda, mp, jb, nn, PANEL->CS_WEIGHTS, nq0, HplNoTrans );
 #endif
 #endif
          Aptr = Mptr( Aptr, 0, nn, lda ); nq0 += nn;
@@ -250,7 +250,7 @@ void HPL_pdupdateTT
             for( _jt = 0; _jt < nn; _jt++ )
             {
                double _s = 0.0; int _it;
-               for( _it = 0; _it < mp; _it++ ) _s += _At[_it + _jt * lda];
+               for( _it = 0; _it < mp; _it++ ) _s += ( PANEL->CS_WEIGHTS ? PANEL->CS_WEIGHTS[_it] : 1.0 ) * _At[_it + _jt * lda];
                PANEL->CS_TRAIL[nq0 + _jt] = _s;
             }
          }
@@ -281,7 +281,7 @@ void HPL_pdupdateTT
 #if HPL_SDC_TRAIL_VERIFY
          if( PANEL->CS_TRAIL )
             HPL_sdc_update_trail_checksum( PANEL->CS_TRAIL,
-               L2ptr, ldl2, Aptr, lda, mp, jb, nn, NULL, nq0, HplNoTrans );
+               L2ptr, ldl2, Aptr, lda, mp, jb, nn, PANEL->CS_WEIGHTS, nq0, HplNoTrans );
 #endif
 #endif
       }
@@ -332,7 +332,7 @@ void HPL_pdupdateTT
          for( _jt = 0; _jt < n; _jt++ )
          {
             double _s = 0.0; int _it;
-            for( _it = 0; _it < mp; _it++ ) _s += _At[_it + _jt * lda];
+            for( _it = 0; _it < mp; _it++ ) _s += ( PANEL->CS_WEIGHTS ? PANEL->CS_WEIGHTS[_it] : 1.0 ) * _At[_it + _jt * lda];
             PANEL->CS_TRAIL[_jt] = _s;
          }
       }
@@ -391,7 +391,7 @@ void HPL_pdupdateTT
 #if HPL_SDC_TRAIL_VERIFY
             if( PANEL->CS_TRAIL )
                HPL_sdc_update_trail_checksum( PANEL->CS_TRAIL,
-                  L2ptr, ldl2, Uptr, LDU, mp, jb, nn, NULL, nq0, HplTrans );
+                  L2ptr, ldl2, Uptr, LDU, mp, jb, nn, PANEL->CS_WEIGHTS, nq0, HplTrans );
 #endif
 #endif
             HPL_dlatcpy( jb, nn, Uptr, LDU, Aptr, lda );
@@ -421,7 +421,7 @@ void HPL_pdupdateTT
 #if HPL_SDC_TRAIL_VERIFY
             if( PANEL->CS_TRAIL )
                HPL_sdc_update_trail_checksum( PANEL->CS_TRAIL,
-                  L2ptr, ldl2, Uptr, LDU, mp, jb, nn, NULL, nq0, HplTrans );
+                  L2ptr, ldl2, Uptr, LDU, mp, jb, nn, PANEL->CS_WEIGHTS, nq0, HplTrans );
 #endif
 #endif
          }
@@ -463,7 +463,7 @@ void HPL_pdupdateTT
 #if HPL_SDC_TRAIL_VERIFY
             if( PANEL->CS_TRAIL )
                HPL_sdc_update_trail_checksum( PANEL->CS_TRAIL,
-                  L2ptr, ldl2, Uptr, LDU, mp, jb, nn, NULL, nq0, HplTrans );
+                  L2ptr, ldl2, Uptr, LDU, mp, jb, nn, PANEL->CS_WEIGHTS, nq0, HplTrans );
 #endif
 #endif
             HPL_dlatcpy( jb, nn, Uptr, LDU, Aptr, lda );
@@ -493,7 +493,7 @@ void HPL_pdupdateTT
 #if HPL_SDC_TRAIL_VERIFY
             if( PANEL->CS_TRAIL )
                HPL_sdc_update_trail_checksum( PANEL->CS_TRAIL,
-                  L2ptr, ldl2, Uptr, LDU, mp, jb, nn, NULL, nq0, HplTrans );
+                  L2ptr, ldl2, Uptr, LDU, mp, jb, nn, PANEL->CS_WEIGHTS, nq0, HplTrans );
 #endif
 #endif
          }
@@ -531,7 +531,7 @@ void HPL_pdupdateTT
          if( _mv > 0 )
          {
             int _fault = HPL_sdc_verify_trailing(
-               _Av, lda, _mv, n, PANEL->CS_TRAIL, NULL, HPL_SDC_THRESHOLD );
+               _Av, lda, _mv, n, PANEL->CS_TRAIL, PANEL->CS_WEIGHTS, HPL_SDC_THRESHOLD );
             if( _fault )
             {
                int _myrank;

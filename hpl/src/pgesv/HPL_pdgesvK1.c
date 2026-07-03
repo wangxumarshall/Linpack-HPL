@@ -163,7 +163,7 @@ void HPL_pdgesvK1
          _ml2 = Mmax( 0, _ml2 );
          HPL_sdc_compute_bcast_checksum( panel[k]->L2, panel[k]->ldl2,
             _ml2, panel[k]->L1, panel[k]->jb, panel[k]->DPIV,
-            panel[k]->jb, &(panel[k]->cs_bcast) );
+            panel[k]->jb, panel[k]->CS_WEIGHTS, &(panel[k]->cs_bcast) );
       }
       else
       {
@@ -185,7 +185,7 @@ void HPL_pdgesvK1
          _ml2 = Mmax( 0, _ml2 );
          HPL_sdc_compute_bcast_checksum( panel[k]->L2, panel[k]->ldl2,
             _ml2, panel[k]->L1, panel[k]->jb, panel[k]->DPIV,
-            panel[k]->jb, &cs_recv );
+            panel[k]->jb, panel[k]->CS_WEIGHTS, &cs_recv );
          if( HPL_sdc_verify_checksum( panel[k]->cs_bcast, cs_recv,
                                       HPL_SDC_THRESHOLD ) )
          {
@@ -256,7 +256,7 @@ void HPL_pdgesvK1
          _ml2 = Mmax( 0, _ml2 );
          HPL_sdc_compute_bcast_checksum( panel[depth]->L2, panel[depth]->ldl2,
             _ml2, panel[depth]->L1, panel[depth]->jb, panel[depth]->DPIV,
-            panel[depth]->jb, &(panel[depth]->cs_bcast) );
+            panel[depth]->jb, panel[depth]->CS_WEIGHTS, &(panel[depth]->cs_bcast) );
       }
       else
       {
@@ -288,7 +288,7 @@ void HPL_pdgesvK1
          _ml2 = Mmax( 0, _ml2 );
          HPL_sdc_compute_bcast_checksum( panel[depth]->L2, panel[depth]->ldl2,
             _ml2, panel[depth]->L1, panel[depth]->jb, panel[depth]->DPIV,
-            panel[depth]->jb, &cs_recv );
+            panel[depth]->jb, panel[depth]->CS_WEIGHTS, &cs_recv );
          if( HPL_sdc_verify_checksum( panel[depth]->cs_bcast, cs_recv,
                                       HPL_SDC_THRESHOLD ) )
          {

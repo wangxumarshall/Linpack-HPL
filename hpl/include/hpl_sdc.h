@@ -103,7 +103,7 @@ STDC_ARGS( ( double *, const double *, int, const double *, int,
               int, int, int, const double *, int, int ) );
 void   HPL_sdc_compute_bcast_checksum
 STDC_ARGS( ( const double *, int, int, const double *, int, const double *,
-              int, double * ) );
+              int, const double *, double * ) );
 
 /* Verification (HPL_sdc_verify.c) */
 int    HPL_sdc_verify_checksum

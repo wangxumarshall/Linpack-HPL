@@ -280,14 +280,12 @@ void HPL_sdc_report_and_aggregate( local_log, comm, my_rank )
    /* Step 6: Rank 0 outputs the report */
    if( my_rank == 0 && g_mpi_rank )
    {
-      /* Count unique nodes */
+      /* Count unique nodes dynamically */
       int num_nodes = 0;
-      char node_list[256][HPL_SDC_NODE_NAME_LEN];
-      int  node_faults[256];
+      int max_nodes = total_faults;
+      char * node_list   = (char *)malloc( (size_t)max_nodes * HPL_SDC_NODE_NAME_LEN );
+      int  * node_faults = (int *) calloc( (size_t)max_nodes, sizeof(int) );
       int  type_counts[6] = {0,0,0,0,0,0};
-
-      memset( node_list, 0, sizeof(node_list) );
-      memset( node_faults, 0, sizeof(node_faults) );
 
       HPL_fprintf( stdout, "\n" );
       HPL_fprintf( stdout, "===== SDC FAULT REPORT =====\n" );
@@ -317,18 +315,19 @@ void HPL_sdc_report_and_aggregate( local_log, comm, my_rank )
             type_counts[g_fault_type[i]]++;
 
          /* Tally by node */
+         if( node_list && node_faults )
          {
             int found = 0, k;
             char * nm = g_node_name + i * HPL_SDC_NODE_NAME_LEN;
             for( k = 0; k < num_nodes; k++ )
             {
-               if( strcmp( node_list[k], nm ) == 0 )
+               if( strcmp( node_list + k * HPL_SDC_NODE_NAME_LEN, nm ) == 0 )
                { node_faults[k]++; found = 1; break; }
             }
-            if( !found && num_nodes < 256 )
+            if( !found && num_nodes < max_nodes )
             {
-               strncpy( node_list[num_nodes], nm, HPL_SDC_NODE_NAME_LEN - 1 );
-               node_list[num_nodes][HPL_SDC_NODE_NAME_LEN-1] = '\0';
+               strncpy( node_list + num_nodes * HPL_SDC_NODE_NAME_LEN, nm, HPL_SDC_NODE_NAME_LEN - 1 );
+               node_list[num_nodes * HPL_SDC_NODE_NAME_LEN + HPL_SDC_NODE_NAME_LEN - 1] = '\0';
                node_faults[num_nodes] = 1;
                num_nodes++;
             }
@@ -337,10 +336,13 @@ void HPL_sdc_report_and_aggregate( local_log, comm, my_rank )
 
       /* Summary by node */
       HPL_fprintf( stdout, "--- Summary by Node ---\n" );
-      for( i = 0; i < num_nodes; i++ )
+      if( node_list && node_faults )
       {
-         HPL_fprintf( stdout, "  %s:  %d faults\n",
-            node_list[i], node_faults[i] );
+         for( i = 0; i < num_nodes; i++ )
+         {
+            HPL_fprintf( stdout, "  %s:  %d faults\n",
+               node_list + i * HPL_SDC_NODE_NAME_LEN, node_faults[i] );
+         }
       }
 
       /* Summary by type */
@@ -358,6 +360,7 @@ void HPL_sdc_report_and_aggregate( local_log, comm, my_rank )
 
       /* Recommendation */
       HPL_fprintf( stdout, "\nRECOMMENDATION: Replace nodes with >10 faults:\n  " );
+      if( node_list && node_faults )
       {
          int printed = 0, k;
          for( k = 0; k < num_nodes; k++ )
@@ -365,13 +368,20 @@ void HPL_sdc_report_and_aggregate( local_log, comm, my_rank )
             if( node_faults[k] > 10 )
             {
                if( printed ) HPL_fprintf( stdout, ", " );
-               HPL_fprintf( stdout, "%s", node_list[k] );
+               HPL_fprintf( stdout, "%s", node_list + k * HPL_SDC_NODE_NAME_LEN );
                printed = 1;
             }
          }
          if( !printed ) HPL_fprintf( stdout, "(none)" );
       }
+      else
+      {
+         HPL_fprintf( stdout, "(none)" );
+      }
       HPL_fprintf( stdout, "\n==============================\n\n" );
+
+      if( node_list )   free( node_list );
+      if( node_faults ) free( node_faults );
    }
 
    /* Cleanup */

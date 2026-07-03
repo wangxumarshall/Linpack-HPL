@@ -142,6 +142,8 @@ void HPL_sdc_update_trail_checksum( cs_trail, L2, ldl2, U, ldu,
    if( jb > 512 )
    {
       cs_l2_ptr = (double *)malloc( (size_t)jb * sizeof(double) );
+      if( cs_l2_ptr == NULL )
+      { HPL_pabort( __LINE__, "HPL_sdc_update_trail_checksum", "Memory allocation failed" ); }
       alloc = 1;
    }
    else
@@ -197,12 +199,13 @@ void HPL_sdc_compute_bcast_checksum
    int            jb_l1,
    const double * DPIV,
    int            jb,
+   const double * weights,
    double       * cs_out
 )
 #else
-void HPL_sdc_compute_bcast_checksum( L2, ldl2, ml2, L1, jb_l1, DPIV, jb, cs_out )
+void HPL_sdc_compute_bcast_checksum( L2, ldl2, ml2, L1, jb_l1, DPIV, jb, weights, cs_out )
    const double * L2; int ldl2, ml2; const double * L1; int jb_l1;
-   const double * DPIV; int jb; double * cs_out;
+   const double * DPIV; int jb; const double * weights; double * cs_out;
 #endif
 {
 /*
@@ -214,14 +217,15 @@ void HPL_sdc_compute_bcast_checksum( L2, ldl2, ml2, L1, jb_l1, DPIV, jb, cs_out 
  * dimension ldl2 (ldl2 >= ml2). We sum only the ml2*jb real panel
  * entries, NOT the stride padding, so the checksum is independent of
  * the memory layout and matches across processes with different ldl2.
+ * Weighted summation is applied to L2 rows to detect composite (+e/-e) errors.
  */
    double cs = 0.0;
    int i, k;
 
-   /* Checksum L2 (sum real panel entries only) */
+   /* Checksum L2 (sum real panel entries with row weights) */
    for( k = 0; k < jb; k++ )
       for( i = 0; i < ml2; i++ )
-         cs += L2[i + k * ldl2];
+         cs += ( weights ? weights[i] : 1.0 ) * L2[i + k * ldl2];
 
    /* Checksum L1 */
    for( i = 0; i < jb_l1 * jb_l1; i++ )

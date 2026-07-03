@@ -451,7 +451,7 @@ test_trail_checksum_update( void )
 static void
 test_bcast_checksum( void )
 {
-   double L2[8], L1[4], DPIV[2];
+   double L2[8], L1[4], DPIV[2], w[4];
    double cs1, cs2;
    int    i;
 
@@ -461,25 +461,26 @@ test_bcast_checksum( void )
    for( i = 0; i < 8; i++ ) L2[i] = (double)(i + 1);
    for( i = 0; i < 4; i++ ) L1[i] = (double)(i + 10);
    DPIV[0] = 100.0; DPIV[1] = 200.0;
+   HPL_sdc_init_weights( w, 4 );
 
-   HPL_sdc_compute_bcast_checksum( L2, 4, 4, L1, 2, DPIV, 2, &cs1 );
+   HPL_sdc_compute_bcast_checksum( L2, 4, 4, L1, 2, DPIV, 2, w, &cs1 );
    test_check( cs1 != 0.0, "Broadcast checksum non-zero" );
 
    /* Recompute - should be identical */
-   HPL_sdc_compute_bcast_checksum( L2, 4, 4, L1, 2, DPIV, 2, &cs2 );
+   HPL_sdc_compute_bcast_checksum( L2, 4, 4, L1, 2, DPIV, 2, w, &cs2 );
    test_check( fabs( cs1 - cs2 ) < 1e-15,
                "Broadcast checksum deterministic" );
 
    /* Corrupt L2 and verify detection */
    L2[3] += 0.001;
-   HPL_sdc_compute_bcast_checksum( L2, 4, 4, L1, 2, DPIV, 2, &cs2 );
+   HPL_sdc_compute_bcast_checksum( L2, 4, 4, L1, 2, DPIV, 2, w, &cs2 );
    test_check( fabs( cs1 - cs2 ) > 1e-10,
                "Broadcast checksum detects L2 corruption" );
 
    /* Restore and corrupt DPIV */
    L2[3] -= 0.001;
    DPIV[0] += 0.001;
-   HPL_sdc_compute_bcast_checksum( L2, 4, 4, L1, 2, DPIV, 2, &cs2 );
+   HPL_sdc_compute_bcast_checksum( L2, 4, 4, L1, 2, DPIV, 2, w, &cs2 );
    test_check( fabs( cs1 - cs2 ) > 1e-10,
                "Broadcast checksum detects DPIV corruption" );
 }
