@@ -64,9 +64,9 @@ Linpack-HPL/
 
 求解 $N \times N$ 稠密线性方程组 $Ax = b$，其中 $A$ 为随机生成的双精度稠密矩阵。算法采用 **带行部分选主元的 LU 分解**（ $PA = LU$ ），将问题分解为：
 
-1. **LU 分解**：$A \rightarrow LU$（带行置换 $P$）
+1. **LU 分解**： $A \rightarrow LU$ （带行置换 $P$）
 2. **前代 + 回代**：先解 $Ly = Pb$，再解 $Ux = y$
-3. **残差验证**：计算 $\|b - Ax\|_\infty / (\varepsilon \cdot (\|A\|_\infty \|x\|_\infty + \|b\|_\infty) \cdot N)$，与阈值比较判定 PASS/FAIL
+3. **残差验证**：计算 $\|b - Ax\|_\infty / (\varepsilon \cdot (\|A\|_\infty \|x\|_\infty + \|b\|_\infty) \cdot N)$ ，与阈值比较判定 PASS/FAIL
 
 ### 3.2 二维分块数据分布
 
@@ -74,7 +74,7 @@ Linpack-HPL/
 
 - 块大小 $NB$：矩阵被切分为 $NB \times NB$ 的数据块
 - 分布方式：第 $(i, j)$ 个数据块分配给网格位置 $(i \bmod P, j \bmod Q)$ 的进程
-- 本地矩阵维度：$mp = \text{HPL\_numroc}(N, NB, NB, myrow, 0, P)$，$nq = \text{HPL\_numroc}(N+1, NB, NB, mycol, 0, Q)$
+- 本地矩阵维度： $mp = \text{HPL\_numroc}(N, NB, NB, myrow, 0, P)$，$nq = \text{HPL\_numroc}(N+1, NB, NB, mycol, 0, Q)$
 
 处理器网格通过 `HPL_grid_init()`（[hpl/src/grid/HPL_grid_init.c](hpl/src/grid/HPL_grid_init.c)）创建，使用 `MPI_Comm_split` 生成行通信器 `row_comm`、列通信器 `col_comm` 和全局通信器 `all_comm`。
 
@@ -194,9 +194,9 @@ $$CS_{\text{trail}}^{\text{new}}[j] = CS_{\text{trail}}^{\text{old}}[j] - \sum_{
 
 其中 $CS_{L_2}[k] = \sum_i w[i] \times L_2[i][k]$。
 
-- 增量更新开销：$O(mp \cdot jb + jb \cdot nn)$
-- 主 DGEMM 开销：$O(mp \cdot jb \cdot nn)$
-- **开销比**：$\approx 1/\min(mp, nn) < 0.1\%$
+- 增量更新开销： $O(mp \cdot jb + jb \cdot nn)$
+- 主 DGEMM 开销： $O(mp \cdot jb \cdot nn)$
+- **开销比**： $\approx 1/\min(mp, nn) < 0.1\%$
 
 实现在 [HPL_pdupdateNN.c](hpl/src/pgesv/HPL_pdupdateNN.c) 等四个 update 文件中，dgemm 后调用 `HPL_sdc_update_trail_checksum()`。
 
