@@ -145,22 +145,6 @@ void HPL_pdupdateNT
       Aptr = PANEL->A;       L2ptr = PANEL->L2;   L1ptr = PANEL->L1;
       ldl2 = PANEL->ldl2;    dpiv  = PANEL->DPIV; ipiv  = PANEL->IWORK;
       mp   = PANEL->mp - jb; iroff = PANEL->ii;   nq0   = 0;
-#ifdef HPL_SDC_CHECK
-#if HPL_SDC_TRAIL_VERIFY
-      /* Recompute CS_TRAIL baseline (uniform weights, swap-invariant) */
-      if( PANEL->CS_TRAIL && n > 0 && mp > 0 )
-      {
-         double * _At = Mptr( Aptr, jb, 0, lda );
-         int _jt;
-         for( _jt = 0; _jt < n; _jt++ )
-         {
-            double _s = 0.0; int _it;
-            for( _it = 0; _it < mp; _it++ ) _s += _At[_it + _jt * lda];
-            PANEL->CS_TRAIL[_jt] = _s;
-         }
-      }
-#endif
-#endif
 #ifdef HPL_CALL_VSIPL
 /*
  * Admit the blocks
@@ -195,6 +179,22 @@ void HPL_pdupdateNT
          HPL_ptimer( HPL_TIMING_LASWP );
 #else
          HPL_dlaswp00N( jb, nn, Aptr, lda, ipiv );
+#endif
+#ifdef HPL_SDC_CHECK
+#if HPL_SDC_TRAIL_VERIFY
+         /* Recompute CS_TRAIL baseline AFTER row swap (post-swap) */
+         if( PANEL->CS_TRAIL && mp > 0 )
+         {
+            double * _At = Mptr( Aptr, jb, 0, lda );
+            int _jt;
+            for( _jt = 0; _jt < nn; _jt++ )
+            {
+               double _s = 0.0; int _it;
+               for( _it = 0; _it < mp; _it++ ) _s += _At[_it + _jt * lda];
+               PANEL->CS_TRAIL[nq0 + _jt] = _s;
+            }
+         }
+#endif
 #endif
          HPL_dtrsm( HplColumnMajor, HplLeft, HplLower, HplNoTrans,
                     HplUnit, jb, nn, HPL_rone, L1ptr, jb, Aptr, lda );
@@ -239,6 +239,22 @@ void HPL_pdupdateNT
          HPL_ptimer( HPL_TIMING_LASWP );
 #else
          HPL_dlaswp00N( jb, nn, Aptr, lda, ipiv );
+#endif
+#ifdef HPL_SDC_CHECK
+#if HPL_SDC_TRAIL_VERIFY
+         /* Recompute CS_TRAIL baseline AFTER row swap (post-swap) */
+         if( PANEL->CS_TRAIL && mp > 0 )
+         {
+            double * _At = Mptr( Aptr, jb, 0, lda );
+            int _jt;
+            for( _jt = 0; _jt < nn; _jt++ )
+            {
+               double _s = 0.0; int _it;
+               for( _it = 0; _it < mp; _it++ ) _s += _At[_it + _jt * lda];
+               PANEL->CS_TRAIL[nq0 + _jt] = _s;
+            }
+         }
+#endif
 #endif
          HPL_dtrsm( HplColumnMajor, HplLeft, HplLower, HplNoTrans,
                     HplUnit, jb, nn, HPL_rone, L1ptr, jb, Aptr, lda );
