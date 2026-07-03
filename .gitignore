@@ -2,6 +2,7 @@
 .trae/
 .vscode/
 .idea/
+.workbuddy/
 
 # Build artifacts
 hpl/bin/
