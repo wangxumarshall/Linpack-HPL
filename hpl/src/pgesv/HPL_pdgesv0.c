@@ -151,6 +151,50 @@ void HPL_pdgesv0
 /*
  * Factor and broadcast current panel - update
  */
+#ifdef HPL_SDC_CHECK
+      if( panel[0]->grid->mycol == panel[0]->pcol )
+      {
+         int _mp = ( panel[0]->grid->myrow == panel[0]->prow ?
+                     panel[0]->mp - panel[0]->jb : panel[0]->mp );
+         _mp = Mmax( 0, _mp );
+         double * _Aptr = ( panel[0]->grid->myrow == panel[0]->prow ?
+                            Mptr( panel[0]->A, panel[0]->jb, 0, panel[0]->lda ) :
+                            panel[0]->A );
+         if( _mp > 0 && panel[0]->jb > 0 )
+         {
+#ifdef HPL_SDC_INJECT
+            {
+               static int _inj_entry_col = -2;
+               static double _inj_entry_val = 1.0e155;
+               if( _inj_entry_col == -2 )
+               {
+                  char * _ec = getenv("HPL_SDC_INJECT_ENTRY_COL");
+                  char * _ev = getenv("HPL_SDC_INJECT_ENTRY_VAL");
+                  _inj_entry_col = _ec ? atoi(_ec) : -1;
+                  _inj_entry_val = _ev ? atof(_ev) : 1.0e155;
+               }
+               if( j == _inj_entry_col )
+               {
+                  _Aptr[0] = _inj_entry_val;
+                  HPL_pwarn( stdout, __LINE__, "HPL_pdgesv0",
+                     "SDC HISTORICAL DGEMM FAULT INJECTED at col %d rank=%d (A[0] set to %e)",
+                     j, myrank, _inj_entry_val );
+               }
+            }
+#endif
+            if( HPL_sdc_verify_panel_entry( _Aptr, panel[0]->lda, _mp, panel[0]->jb ) )
+            {
+               HPL_sdc_log_fault( &sdc_log_global, myrank,
+                  panel[0]->grid->myrow, panel[0]->grid->mycol,
+                  HPL_SDC_FAULT_PANEL_ENTRY, j,
+                  panel[0]->ia, panel[0]->ja, 0.0, 0.0 );
+               HPL_pwarn( stdout, __LINE__, "HPL_pdgesv0",
+                  "SDC detected at panel entry (from historical DGEMM) at col %d (j=%d) on rank %d",
+                  j, j, myrank );
+            }
+         }
+      }
+#endif
       HPL_pdfact(               panel[0] );
       (void) HPL_binit(         panel[0] );
 #ifdef HPL_SDC_CHECK

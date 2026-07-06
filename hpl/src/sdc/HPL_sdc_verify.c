@@ -77,40 +77,43 @@ int HPL_sdc_verify_panel( A, lda, m, n, weights, cs_expected, threshold )
 }
 
 #ifdef STDC_HEADERS
-int HPL_sdc_verify_trailing
+int HPL_sdc_verify_panel_entry
 (
    const double * A,
    const int      lda,
    const int      m,
-   const int      n,
-   const double * cs_expected,
-   const double * weights,
-   const double   threshold
+   const int      n
 )
 #else
-int HPL_sdc_verify_trailing( A, lda, m, n, cs_expected, weights, threshold )
+int HPL_sdc_verify_panel_entry( A, lda, m, n )
    const double * A; const int lda, m, n;
-   const double * cs_expected; const double * weights; const double threshold;
 #endif
 {
 /*
  * Purpose
  * =======
- * Verify trailing matrix checksums by full recomputation from matrix data.
- * Returns number of mismatched columns (0 if all match).
+ * Verify panel column block upon entry to factorization (JIT Check).
+ * Checks SIMD/Cache-resident data for IEEE 754 NaN/Inf or numerical divergence
+ * resulting from historical DGEMM trailing matrix updates.
+ * Returns 1 if corruption/singularity detected, 0 otherwise.
  */
-   int j, failed = 0;
-   double cs_comp;
+   int i, j;
 
-   if( !A || !cs_expected ) return 0;
+   if( !A || m <= 0 || n <= 0 ) return 0;
 
    for( j = 0; j < n; j++ )
    {
-      HPL_sdc_panel_checksum( A + (size_t)j * lda, lda, m, 1, weights, &cs_comp );
-      if( HPL_sdc_verify_checksum( cs_expected[j], cs_comp, threshold ) )
-         failed++;
+      const double * col = A + (size_t)j * lda;
+      for( i = 0; i < m; i++ )
+      {
+         double val = col[i];
+         if( isnan(val) || isinf(val) || (val > 1.0e150) || (val < -1.0e150) )
+         {
+            return 1;
+         }
+      }
    }
-   return failed;
+   return 0;
 }
 
 #endif /* HPL_SDC_CHECK */

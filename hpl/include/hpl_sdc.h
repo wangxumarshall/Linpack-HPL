@@ -24,10 +24,6 @@
 #define HPL_SDC_BCAST_VERIFY          1
 #endif
 
-#ifndef HPL_SDC_TRAIL_VERIFY
-#define HPL_SDC_TRAIL_VERIFY          0
-#endif
-
 #ifndef HPL_SDC_THRESHOLD
 #define HPL_SDC_THRESHOLD             1.0e-10
 #endif
@@ -49,7 +45,7 @@ typedef enum
 {
    HPL_SDC_FAULT_PANEL_BCAST    = 0,   /* panel broadcast corruption  */
    HPL_SDC_FAULT_PANEL_FACT     = 1,   /* panel factorization corrupt  */
-   HPL_SDC_FAULT_TRAIL_UPDATE   = 2,   /* trailing matrix update corr. */
+   HPL_SDC_FAULT_PANEL_ENTRY    = 2,   /* panel entry check (hist DGEMM) */
    HPL_SDC_FAULT_BACK_SOLVE     = 3,   /* back substitution corruption */
    HPL_SDC_FAULT_BROADCAST      = 4,   /* comm layer broadcast corrupt */
    HPL_SDC_FAULT_UNKNOWN        = 5,   /* unknown type                 */
@@ -106,9 +102,6 @@ double HPL_sdc_col_checksum
 STDC_ARGS( ( const double *, const int, const int, const int, const double * ) );
 void   HPL_sdc_panel_checksum
 STDC_ARGS( ( const double *, const int, const int, const int, const double *, double * ) );
-void   HPL_sdc_update_trail_checksum
-STDC_ARGS( ( double *, const double *, const int, const double *, const int,
-              const int, const int, const int, const double *, const int, const int ) );
 void   HPL_sdc_compute_bcast_checksum
 STDC_ARGS( ( const double *, const int, const int, const double *, const int, const double *,
               const int, const double *, double * ) );
@@ -119,8 +112,8 @@ STDC_ARGS( ( const double, const double, const double ) );
 int    HPL_sdc_verify_panel
 STDC_ARGS( ( const double *, const int, const int, const int, const double *,
               const double *, const double ) );
-int    HPL_sdc_verify_trailing
-STDC_ARGS( ( const double *, const int, const int, const int, const double *, const double *, const double ) );
+int    HPL_sdc_verify_panel_entry
+STDC_ARGS( ( const double *, const int, const int, const int ) );
 
 /* Fault logging and reporting (HPL_sdc_report.c) */
 void   HPL_sdc_log_init

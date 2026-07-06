@@ -138,30 +138,31 @@ test_verification( void )
                                   HPL_SDC_THRESHOLD );
    test_check( result == 1, "True positive: corrupted data detected" );
 
-   /* Restore and test trailing verification */
+   /* Restore and test JIT panel entry verification */
    A[5] = 5.0;
    {
-      double cs_trail[3];
-      double w_uniform[4] = {1.0, 1.0, 1.0, 1.0};
-      /* Compute trailing checksums (uniform weights = all 1.0) */
-      int j;
-      for( j = 0; j < 3; j++ )
-      {
-         double s = 0.0; int i;
-         for( i = 0; i < 4; i++ ) s += A[i + j*4];
-         cs_trail[j] = s;
-      }
-      result = HPL_sdc_verify_trailing( A, 4, 4, 3, cs_trail,
-                                        w_uniform, HPL_SDC_THRESHOLD );
+      result = HPL_sdc_verify_panel_entry( A, 4, 4, 3 );
       test_check( result == 0,
-                  "True negative: trailing checksum clean" );
+                  "True negative: panel entry clean" );
 
-      /* Corrupt and re-verify */
-      A[9] = -1.0;  /* corrupt A[1][2] */
-      result = HPL_sdc_verify_trailing( A, 4, 4, 3, cs_trail,
-                                        w_uniform, HPL_SDC_THRESHOLD );
+      /* Corrupt with extreme divergence and re-verify */
+      A[9] = 1.0e155;
+      result = HPL_sdc_verify_panel_entry( A, 4, 4, 3 );
       test_check( result == 1,
-                  "True positive: trailing checksum corruption detected" );
+                  "True positive: panel entry extreme divergence detected" );
+
+      /* Corrupt with Inf and re-verify */
+      A[9] = INFINITY;
+      result = HPL_sdc_verify_panel_entry( A, 4, 4, 3 );
+      test_check( result == 1,
+                  "True positive: panel entry Inf detected" );
+
+      /* Corrupt with NaN and re-verify */
+      A[9] = NAN;
+      result = HPL_sdc_verify_panel_entry( A, 4, 4, 3 );
+      test_check( result == 1,
+                  "True positive: panel entry NaN detected" );
+
       A[9] = 8.0;  /* restore */
    }
 
@@ -317,8 +318,8 @@ test_fault_logging( MPI_Comm comm, int myrank )
 
    /* Log some test faults */
    HPL_sdc_log_fault( &log, myrank, 0, 0,
-                      HPL_SDC_FAULT_TRAIL_UPDATE, 100, 50, 75,
-                      1.23456789, 1.23456799 );
+                      HPL_SDC_FAULT_PANEL_ENTRY, 100, 50, 75,
+                      0.0, 0.0 );
    test_check( log.count == 1, "Fault logged: count = 1" );
 
    HPL_sdc_log_fault( &log, myrank, 0, 1,
@@ -358,89 +359,55 @@ test_fault_logging( MPI_Comm comm, int myrank )
 
 /*
  * =====================================================================
- * TEST GROUP 5: Incremental Trail Checksum Update
+ * TEST GROUP 5: JIT Panel Entry Verification
  * =====================================================================
  */
 static void
-test_trail_checksum_update( void )
+test_panel_entry_verification( void )
 {
-   double A[16], L2[8], U[8], w[4];
-   double cs_trail[4], cs_ref[4];
-   int    i, j, k;
+   double A[16];
+   int    i, result;
 
-   printf( "\n--- Test Group 5: Incremental Trail Checksum Update ---\n" );
+   printf( "\n--- Test Group 5: JIT Panel Entry Verification ---\n" );
 
-   /*
-    * 4x4 trailing matrix A (col-major, lda=4)
-    * L2 is 4x2 (ldl2=4), U is 2x4 (ldu=2)
-    * Update: A -= L2 * U
-    */
-   /* A = ones(4,4) * 10 */
-   for( i = 0; i < 16; i++ ) A[i] = 10.0;
+   /* Clean matrix */
+   for( i = 0; i < 16; i++ ) A[i] = (double)(i + 1) * 1.5;
+   result = HPL_sdc_verify_panel_entry( A, 4, 4, 4 );
+   test_check( result == 0, "Panel entry clean matrix passes" );
 
-   /* L2 = | 1 3 |   U = | 1 1 1 1 |
-    *      | 2 4 |       | 2 2 2 2 |
-    *      | 1 3 |
-    *      | 2 4 |
-    */
-   L2[0]=1.0; L2[1]=2.0; L2[2]=1.0; L2[3]=2.0;
-   L2[4]=3.0; L2[5]=4.0; L2[6]=3.0; L2[7]=4.0;
-   U[0]=1.0; U[1]=2.0; U[2]=1.0; U[3]=2.0;
-   U[4]=1.0; U[5]=2.0; U[6]=1.0; U[7]=2.0;
+   /* Boundary values exactly at threshold (+/- 1.0e150) */
+   A[3] = 1.0e150;
+   result = HPL_sdc_verify_panel_entry( A, 4, 4, 4 );
+   test_check( result == 0, "Panel entry boundary +1.0e150 passes" );
 
-   HPL_sdc_init_weights( w, 4 );
+   A[3] = -1.0e150;
+   result = HPL_sdc_verify_panel_entry( A, 4, 4, 4 );
+   test_check( result == 0, "Panel entry boundary -1.0e150 passes" );
 
-   /* Compute reference checksums of A BEFORE update */
-   for( j = 0; j < 4; j++ )
-   {
-      double s = 0.0;
-      for( i = 0; i < 4; i++ ) s += w[i] * A[i + j*4];
-      cs_trail[j] = s;
-      cs_ref[j] = s;
-   }
+   /* Exceeding positive threshold */
+   A[3] = 1.0e150 * 1.0001;
+   result = HPL_sdc_verify_panel_entry( A, 4, 4, 4 );
+   test_check( result == 1, "Panel entry > +1.0e150 intercepted" );
 
-   /* Perform the actual matrix update A -= L2 * U */
-   for( j = 0; j < 4; j++ )
-      for( i = 0; i < 4; i++ )
-      {
-         double dot = 0.0;
-         for( k = 0; k < 2; k++ )
-            dot += L2[i + k*4] * U[k + j*2];
-         A[i + j*4] -= dot;
-      }
+   /* Exceeding negative threshold */
+   A[3] = -1.0e150 * 1.0001;
+   result = HPL_sdc_verify_panel_entry( A, 4, 4, 4 );
+   test_check( result == 1, "Panel entry < -1.0e150 intercepted" );
 
-   /* Incrementally update the checksum */
-   HPL_sdc_update_trail_checksum( cs_trail, L2, 4, U, 2,
-                                  4, 2, 4, w, 0, HplNoTrans );
+   /* NaN value */
+   A[3] = NAN;
+   result = HPL_sdc_verify_panel_entry( A, 4, 4, 4 );
+   test_check( result == 1, "Panel entry NaN intercepted" );
 
-   /* Compute reference checksums of A AFTER update */
-   for( j = 0; j < 4; j++ )
-   {
-      double s = 0.0;
-      for( i = 0; i < 4; i++ ) s += w[i] * A[i + j*4];
-      cs_ref[j] = s;
-   }
+   /* Inf value */
+   A[3] = INFINITY;
+   result = HPL_sdc_verify_panel_entry( A, 4, 4, 4 );
+   test_check( result == 1, "Panel entry +Inf intercepted" );
 
-   /* Compare incremental vs reference */
-   {
-      int match = 1;
-      for( j = 0; j < 4; j++ )
-      {
-         if( fabs( cs_trail[j] - cs_ref[j] ) > 1e-10 )
-            match = 0;
-      }
-      test_check( match,
-                  "Incremental trail checksum matches full recomputation" );
-   }
-
-   /* Now corrupt A and verify detection */
-   A[5] += 1.0e-5;
-   {
-      int detected = HPL_sdc_verify_trailing( A, 4, 4, 4, cs_trail,
-                                              w, HPL_SDC_THRESHOLD );
-      test_check( detected == 1,
-                  "Corrupted trail matrix detected after update" );
-   }
+   /* -Inf value */
+   A[3] = -INFINITY;
+   result = HPL_sdc_verify_panel_entry( A, 4, 4, 4 );
+   test_check( result == 1, "Panel entry -Inf intercepted" );
 }
 
 /*
@@ -532,7 +499,7 @@ test_detection_latency( void )
 int main( int argc, char * argv[] )
 {
    int myrank, nprocs;
-   int total_pass, total_fail, total_fp, total_all;
+   int total_pass = 0, total_fail = 0, total_fp = 0, total_all = 0;
 
    MPI_Init( &argc, &argv );
    MPI_Comm_rank( MPI_COMM_WORLD, &myrank );
@@ -556,7 +523,7 @@ int main( int argc, char * argv[] )
    test_injection_models();
 #endif
    test_fault_logging( MPI_COMM_WORLD, myrank );
-   test_trail_checksum_update();
+   test_panel_entry_verification();
    test_bcast_checksum();
 #ifdef HPL_SDC_INJECT
    test_detection_latency();
@@ -565,14 +532,14 @@ int main( int argc, char * argv[] )
    /*
     * Aggregate results across all processes
     */
-   MPI_Reduce( &test_total,  &total_all,  1, MPI_INT, MPI_SUM, 0,
-               MPI_COMM_WORLD );
-   MPI_Reduce( &test_passed, &total_pass, 1, MPI_INT, MPI_SUM, 0,
-               MPI_COMM_WORLD );
-   MPI_Reduce( &test_failed, &total_fail, 1, MPI_INT, MPI_SUM, 0,
-               MPI_COMM_WORLD );
-   MPI_Reduce( &test_false_pos, &total_fp, 1, MPI_INT, MPI_SUM, 0,
-               MPI_COMM_WORLD );
+   MPI_Allreduce( &test_total,  &total_all,  1, MPI_INT, MPI_SUM,
+                  MPI_COMM_WORLD );
+   MPI_Allreduce( &test_passed, &total_pass, 1, MPI_INT, MPI_SUM,
+                  MPI_COMM_WORLD );
+   MPI_Allreduce( &test_failed, &total_fail, 1, MPI_INT, MPI_SUM,
+                  MPI_COMM_WORLD );
+   MPI_Allreduce( &test_false_pos, &total_fp, 1, MPI_INT, MPI_SUM,
+                  MPI_COMM_WORLD );
 
    if( myrank == 0 )
    {

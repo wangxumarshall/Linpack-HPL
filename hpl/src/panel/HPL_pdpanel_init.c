@@ -345,12 +345,10 @@ void HPL_pdpanel_init
 #ifdef HPL_SDC_CHECK
    PANEL->CS_PANEL  = (double *)malloc( (size_t)Mmax(1,JB) * sizeof(double) );
    PANEL->CS_WEIGHTS = (double *)malloc( (size_t)Mmax(1,mp) * sizeof(double) );
-   PANEL->CS_TRAIL  = (double *)malloc( (size_t)Mmax(1,nq) * sizeof(double) );
-   if( ! (PANEL->CS_PANEL && PANEL->CS_WEIGHTS && PANEL->CS_TRAIL) )
+   if( ! (PANEL->CS_PANEL && PANEL->CS_WEIGHTS) )
    {
       if( PANEL->CS_PANEL  ) { free( PANEL->CS_PANEL  ); PANEL->CS_PANEL  = NULL; }
       if( PANEL->CS_WEIGHTS){ free( PANEL->CS_WEIGHTS);PANEL->CS_WEIGHTS = NULL; }
-      if( PANEL->CS_TRAIL  ) { free( PANEL->CS_TRAIL  ); PANEL->CS_TRAIL  = NULL; }
    }
    else
    {

@@ -159,32 +159,51 @@ void HPL_pdgesvK2
 /*
  * Factor and broadcast k-th panel
  */
-      HPL_pdfact(         panel[k] );
 #ifdef HPL_SDC_CHECK
-#if HPL_SDC_TRAIL_VERIFY
-      /* Defensive pre-fill of CS_TRAIL after factorization */
-      if( panel[k]->CS_TRAIL )
+      if( panel[k]->grid->mycol == panel[k]->pcol )
       {
-         double * _Ai = ( panel[k]->grid->myrow == panel[k]->prow ?
-                      Mptr( panel[k]->A, panel[k]->jb, 0, panel[k]->lda ) :
-                      panel[k]->A );
-         int _mi = ( panel[k]->grid->myrow == panel[k]->prow ?
-                   panel[k]->mp - panel[k]->jb : panel[k]->mp );
-         _mi = Mmax( 0, _mi );
-         if( _mi > 0 && panel[k]->nq > 0 )
+         int _mp = ( panel[k]->grid->myrow == panel[k]->prow ?
+                     panel[k]->mp - panel[k]->jb : panel[k]->mp );
+         _mp = Mmax( 0, _mp );
+         double * _Aptr = ( panel[k]->grid->myrow == panel[k]->prow ?
+                            Mptr( panel[k]->A, panel[k]->jb, 0, panel[k]->lda ) :
+                            panel[k]->A );
+         if( _mp > 0 && panel[k]->jb > 0 )
          {
-            int _ji;
-            for( _ji = 0; _ji < panel[k]->nq; _ji++ )
+#ifdef HPL_SDC_INJECT
             {
-               double _s = 0.0; int _ii;
-               for( _ii = 0; _ii < _mi; _ii++ )
-                  _s += ( panel[k]->CS_WEIGHTS ? panel[k]->CS_WEIGHTS[_ii] : 1.0 ) * _Ai[_ii + _ji * panel[k]->lda];
-               panel[k]->CS_TRAIL[_ji] = _s;
+               static int _inj_entry_col = -2;
+               static double _inj_entry_val = 1.0e155;
+               if( _inj_entry_col == -2 )
+               {
+                  char * _ec = getenv("HPL_SDC_INJECT_ENTRY_COL");
+                  char * _ev = getenv("HPL_SDC_INJECT_ENTRY_VAL");
+                  _inj_entry_col = _ec ? atoi(_ec) : -1;
+                  _inj_entry_val = _ev ? atof(_ev) : 1.0e155;
+               }
+               if( j == _inj_entry_col )
+               {
+                  _Aptr[0] = _inj_entry_val;
+                  HPL_pwarn( stdout, __LINE__, "HPL_pdgesvK2",
+                     "SDC HISTORICAL DGEMM FAULT INJECTED at col %d rank=%d (A[0] set to %e)",
+                     j, myrank, _inj_entry_val );
+               }
+            }
+#endif
+            if( HPL_sdc_verify_panel_entry( _Aptr, panel[k]->lda, _mp, panel[k]->jb ) )
+            {
+               HPL_sdc_log_fault( &sdc_log_global, myrank,
+                  panel[k]->grid->myrow, panel[k]->grid->mycol,
+                  HPL_SDC_FAULT_PANEL_ENTRY, j,
+                  panel[k]->ia, panel[k]->ja, 0.0, 0.0 );
+               HPL_pwarn( stdout, __LINE__, "HPL_pdgesvK2",
+                  "SDC detected at panel entry (from historical DGEMM) at col %d (k=%d) on rank %d",
+                  j, k, myrank );
             }
          }
       }
 #endif
-#endif
+      HPL_pdfact(         panel[k] );
       (void) HPL_binit(   panel[k] );
 #ifdef HPL_SDC_CHECK
       if( mycol == panel[k]->pcol && panel[k]->CS_PANEL )
@@ -269,32 +288,51 @@ void HPL_pdgesvK2
          nn = HPL_numrocI( jb, j, nb, nb, mycol, 0, npcol );
          for( k = 0; k < depth; k++ )   /* partial updates 0..depth-1 */
             (void) HPL_pdupdate( NULL, NULL, panel[k], nn );
-         HPL_pdfact(       panel[depth] );    /* factor current panel */
 #ifdef HPL_SDC_CHECK
-#if HPL_SDC_TRAIL_VERIFY
-         /* Defensive pre-fill of CS_TRAIL after factorization */
-         if( panel[depth]->CS_TRAIL )
+         if( panel[depth]->grid->mycol == panel[depth]->pcol )
          {
-            double * _Ai = ( panel[depth]->grid->myrow == panel[depth]->prow ?
-                         Mptr( panel[depth]->A, panel[depth]->jb, 0, panel[depth]->lda ) :
-                         panel[depth]->A );
-            int _mi = ( panel[depth]->grid->myrow == panel[depth]->prow ?
-                      panel[depth]->mp - panel[depth]->jb : panel[depth]->mp );
-            _mi = Mmax( 0, _mi );
-            if( _mi > 0 && panel[depth]->nq > 0 )
+            int _mp = ( panel[depth]->grid->myrow == panel[depth]->prow ?
+                        panel[depth]->mp - panel[depth]->jb : panel[depth]->mp );
+            _mp = Mmax( 0, _mp );
+            double * _Aptr = ( panel[depth]->grid->myrow == panel[depth]->prow ?
+                               Mptr( panel[depth]->A, panel[depth]->jb, 0, panel[depth]->lda ) :
+                               panel[depth]->A );
+            if( _mp > 0 && panel[depth]->jb > 0 )
             {
-               int _ji;
-               for( _ji = 0; _ji < panel[depth]->nq; _ji++ )
+#ifdef HPL_SDC_INJECT
                {
-                  double _s = 0.0; int _ii;
-                  for( _ii = 0; _ii < _mi; _ii++ )
-                     _s += ( panel[depth]->CS_WEIGHTS ? panel[depth]->CS_WEIGHTS[_ii] : 1.0 ) * _Ai[_ii + _ji * panel[depth]->lda];
-                  panel[depth]->CS_TRAIL[_ji] = _s;
+                  static int _inj_entry_col = -2;
+                  static double _inj_entry_val = 1.0e155;
+                  if( _inj_entry_col == -2 )
+                  {
+                     char * _ec = getenv("HPL_SDC_INJECT_ENTRY_COL");
+                     char * _ev = getenv("HPL_SDC_INJECT_ENTRY_VAL");
+                     _inj_entry_col = _ec ? atoi(_ec) : -1;
+                     _inj_entry_val = _ev ? atof(_ev) : 1.0e155;
+                  }
+                  if( j == _inj_entry_col )
+                  {
+                     _Aptr[0] = _inj_entry_val;
+                     HPL_pwarn( stdout, __LINE__, "HPL_pdgesvK2",
+                        "SDC HISTORICAL DGEMM FAULT INJECTED at col %d rank=%d (A[0] set to %e)",
+                        j, myrank, _inj_entry_val );
+                  }
+               }
+#endif
+               if( HPL_sdc_verify_panel_entry( _Aptr, panel[depth]->lda, _mp, panel[depth]->jb ) )
+               {
+                  HPL_sdc_log_fault( &sdc_log_global, myrank,
+                     panel[depth]->grid->myrow, panel[depth]->grid->mycol,
+                     HPL_SDC_FAULT_PANEL_ENTRY, j,
+                     panel[depth]->ia, panel[depth]->ja, 0.0, 0.0 );
+                  HPL_pwarn( stdout, __LINE__, "HPL_pdgesvK2",
+                     "SDC detected at panel entry (from historical DGEMM) at col %d (k=%d) on rank %d",
+                     j, depth, myrank );
                }
             }
          }
 #endif
-#endif
+         HPL_pdfact(       panel[depth] );    /* factor current panel */
       }
       else { nn = 0; }
           /* binit must be called BEFORE cs_bcast computation: when HPL_COPY_L

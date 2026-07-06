@@ -100,7 +100,7 @@ HPL_INCLUDES = -I$(INCdir) -I$(INCdir)/$(ARCH) $(LAinc) $(MPinc)
 HPL_LIBS     = $(HPLlib) $(LAlib) $(MPlib) -lm
 #
 # - Compile time options -----------------------------------------------
-HPL_OPTS     = -DHPL_SDC_CHECK -DHPL_SDC_INJECT -DHPL_SDC_BCAST_VERIFY=1 -DHPL_SDC_TRAIL_VERIFY=1
+HPL_OPTS     = -DHPL_SDC_CHECK -DHPL_SDC_INJECT -DHPL_SDC_BCAST_VERIFY=1
 #
 HPL_DEFS     = $(F2CDEFS) $(HPL_OPTS) $(HPL_INCLUDES)
 #

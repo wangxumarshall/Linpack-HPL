@@ -113,7 +113,7 @@ static const char * HPL_sdc_fault_type_str
    {
    case HPL_SDC_FAULT_PANEL_BCAST:  return "PANEL_BCAST";
    case HPL_SDC_FAULT_PANEL_FACT:   return "PANEL_FACT";
-   case HPL_SDC_FAULT_TRAIL_UPDATE: return "TRAIL_UPDATE";
+   case HPL_SDC_FAULT_PANEL_ENTRY:  return "PANEL_ENTRY";
    case HPL_SDC_FAULT_BACK_SOLVE:   return "BACK_SOLVE";
    case HPL_SDC_FAULT_BROADCAST:    return "BROADCAST";
    default:                         return "UNKNOWN";
@@ -360,9 +360,9 @@ void HPL_sdc_report_and_aggregate( local_log, comm, my_rank )
       }
 
       HPL_fprintf( stdout, "\n--- Summary by Fault Type ---\n" );
-      HPL_fprintf( stdout, "  TRAIL_UPDATE: %d, PANEL_BCAST: %d, "
+      HPL_fprintf( stdout, "  PANEL_ENTRY: %d, PANEL_BCAST: %d, "
          "PANEL_FACT: %d\n",
-         type_counts[HPL_SDC_FAULT_TRAIL_UPDATE],
+         type_counts[HPL_SDC_FAULT_PANEL_ENTRY],
          type_counts[HPL_SDC_FAULT_PANEL_BCAST],
          type_counts[HPL_SDC_FAULT_PANEL_FACT] );
       HPL_fprintf( stdout, "  BACK_SOLVE: %d, BROADCAST: %d, "
