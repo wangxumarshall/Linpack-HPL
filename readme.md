@@ -78,7 +78,7 @@ Linpack-HPL/
 
 - 块大小 $NB$：矩阵被切分为 $NB \times NB$ 的数据块
 - 分布方式：第 $(i, j)$ 个数据块分配给网格位置 $(i \bmod P, j \bmod Q)$ 的进程
-- 本地矩阵维度： $mp = \text{HPL}\_\text{numroc}(N, NB, NB, \text{myrow}, 0, P)$，$nq = \text{HPL}\_\text{numroc}(N+1, NB, NB, \text{mycol}, 0, Q)$
+- 本地矩阵维度： `mp = HPL_numroc(N, NB, NB, myrow, 0, P)`，`nq = HPL_numroc(N+1, NB, NB, mycol, 0, Q)`
 
 处理器网格通过 `HPL_grid_init()`（[hpl/src/grid/HPL_grid_init.c](hpl/src/grid/HPL_grid_init.c)）创建，使用 `MPI_Comm_split` 生成行通信器 `row_comm`、列通信器 `col_comm` 和全局通信器 `all_comm`。
 
@@ -227,7 +227,8 @@ graph TD
   - 面板所有者进程（`mycol == icurcol`）构建广播指纹 `cs_bcast`，非所有者进程赋为 `0.0`。
   - 利用 `MPI_Allreduce(..., MPI_MAX, row_comm)` 在毫无额外通信握手的条件下将权威参考指纹 `cs_ref` 同步至同行所有进程。
 - **接收端断言**：非阻塞广播等待 `HPL_bwait()` 结束后，接收端重算接收缓冲区的实际指纹 `cs_recv`，根据相对偏差法则断言：
-  $$\frac{|CS_{\text{recv}} - CS_{\text{ref}}|}{\max(|CS_{\text{ref}}|, 1.0)} > 1.0 \times 10^{-10} \implies \text{触发 HPL\_SDC\_FAULT\_PANEL\_BCAST 故障！}$$
+  $$\frac{|CS_{\text{recv}} - CS_{\text{ref}}|}{\max(|CS_{\text{ref}}|, 1.0)} > 1.0 \times 10^{-10}$$
+  一旦相对偏差超过阈值，立即触发 `HPL_SDC_FAULT_PANEL_BCAST` 故障记录！
 
 #### 防线四：回代求解与全局残差检验（Line of Defense 4 - 最终质量闸门）
 
