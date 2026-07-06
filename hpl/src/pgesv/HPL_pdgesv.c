@@ -110,6 +110,15 @@ void HPL_pdgesv
  * Solve upper triangular system
  */
    if( A->info == 0 ) HPL_pdtrsv( GRID, A );
+
+#ifdef HPL_SDC_CHECK
+   {
+      int myrank;
+      MPI_Comm_rank( GRID->all_comm, &myrank );
+      HPL_sdc_report_and_aggregate( &sdc_log_global, GRID->all_comm, myrank );
+      HPL_sdc_log_cleanup( &sdc_log_global );
+   }
+#endif
 /*
  * End of HPL_pdgesv
  */

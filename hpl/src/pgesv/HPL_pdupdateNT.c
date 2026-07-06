@@ -534,12 +534,22 @@ void HPL_pdupdateNT
                _Av, lda, _mv, n, PANEL->CS_TRAIL, PANEL->CS_WEIGHTS, HPL_SDC_THRESHOLD );
             if( _fault )
             {
-               int _myrank;
+               int _myrank, _dj;
+               double _maxdev = 0.0, _cs_exp = 0.0, _cs_cmp = 0.0;
                MPI_Comm_rank( PANEL->grid->all_comm, &_myrank );
+               for( _dj = 0; _dj < n; _dj++ )
+               {
+                  double _s = 0.0;
+                  double _dev;
+                  HPL_sdc_panel_checksum( _Av + (size_t)_dj * lda, lda, _mv, 1, PANEL->CS_WEIGHTS, &_s );
+                  _dev = fabs( _s - PANEL->CS_TRAIL[_dj] );
+                  if( _dev > _maxdev )
+                  { _maxdev = _dev; _cs_exp = PANEL->CS_TRAIL[_dj]; _cs_cmp = _s; }
+               }
                HPL_sdc_log_fault( &sdc_log_global, _myrank,
                   PANEL->grid->myrow, PANEL->grid->mycol,
                   HPL_SDC_FAULT_TRAIL_UPDATE, PANEL->sdc_step,
-                  PANEL->ia, PANEL->ja, 0.0, 0.0 );
+                  PANEL->ia, PANEL->ja, _cs_exp, _cs_cmp );
                HPL_pwarn( stdout, __LINE__, "HPL_pdupdateNT",
                   "SDC detected in trailing matrix update at "
                   "step %d (panel ja=%d) on rank %d",

@@ -212,10 +212,6 @@ void HPL_pdgesv0
    (void) HPL_pdpanel_disp( &panel[0] );
 
    if( panel ) free( panel );
-#ifdef HPL_SDC_CHECK
-   HPL_sdc_report_and_aggregate( &sdc_log_global, GRID->all_comm, myrank );
-   HPL_sdc_log_cleanup( &sdc_log_global );
-#endif
 /*
  * End of HPL_pdgesv0
  */

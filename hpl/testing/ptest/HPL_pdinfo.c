@@ -607,7 +607,7 @@ void HPL_pdinfo
  * Close input file
  */
 label_error:
-      (void) fclose( infp );
+      if( infp ) (void) fclose( infp );
    }
    else { TEST->outfp = NULL; }
 /*

@@ -360,8 +360,7 @@ void HPL_pdgesvK2
          if( HPL_sdc_verify_checksum( panel[depth]->cs_bcast, cs_recv,
                                       HPL_SDC_THRESHOLD ) )
          {
-            double dev = panel[depth]->cs_bcast - cs_recv;
-            if( dev < 0.0 ) dev = -dev;
+            double dev = fabs( panel[depth]->cs_bcast - cs_recv );
             HPL_sdc_log_fault( &sdc_log_global, myrank,
                panel[depth]->grid->myrow, panel[depth]->grid->mycol,
                HPL_SDC_FAULT_PANEL_BCAST, j,
@@ -398,11 +397,6 @@ void HPL_pdgesvK2
    (void) HPL_pdpanel_disp( &panel[depth] );
 
    if( panel ) free( panel );
-#ifdef HPL_SDC_CHECK
-   /* Aggregate and report SDC faults from all processes */
-   HPL_sdc_report_and_aggregate( &sdc_log_global, GRID->all_comm, myrank );
-   HPL_sdc_log_cleanup( &sdc_log_global );
-#endif
 /*
  * End of HPL_pdgesvK2
  */

@@ -12,6 +12,7 @@
  */
 #include "hpl_pmisc.h"
 #include <string.h>
+#include <math.h>
 
 #ifdef HPL_SDC_CHECK
 /*
@@ -31,8 +32,14 @@
 #define HPL_SDC_THRESHOLD             1.0e-10
 #endif
 
-#define HPL_SDC_WEIGHT_WINDOW        16
-#define HPL_SDC_NODE_NAME_LEN        64
+#ifndef HPL_SDC_WEIGHT_WINDOW
+#define HPL_SDC_WEIGHT_WINDOW         16
+#endif
+
+#ifndef HPL_SDC_NODE_NAME_LEN
+#define HPL_SDC_NODE_NAME_LEN         64
+#endif
+
 /*
  * ---------------------------------------------------------------------
  * SDC fault type enumeration
@@ -45,7 +52,8 @@ typedef enum
    HPL_SDC_FAULT_TRAIL_UPDATE   = 2,   /* trailing matrix update corr. */
    HPL_SDC_FAULT_BACK_SOLVE     = 3,   /* back substitution corruption */
    HPL_SDC_FAULT_BROADCAST      = 4,   /* comm layer broadcast corrupt */
-   HPL_SDC_FAULT_UNKNOWN        = 5    /* unknown type                 */
+   HPL_SDC_FAULT_UNKNOWN        = 5,   /* unknown type                 */
+   HPL_SDC_FAULT_COUNT          = 6    /* count of fault types         */
 } HPL_T_SDC_FAULT_TYPE;
 
 /*
@@ -93,47 +101,47 @@ extern HPL_T_SDC_LOG HPL_sdc_global_log;
 
 /* Checksum computation (HPL_sdc_checksum.c) */
 void   HPL_sdc_init_weights
-STDC_ARGS( ( double *, int ) );
+STDC_ARGS( ( double *, const int ) );
 double HPL_sdc_col_checksum
-STDC_ARGS( ( const double *, int, int, int, const double * ) );
+STDC_ARGS( ( const double *, const int, const int, const int, const double * ) );
 void   HPL_sdc_panel_checksum
-STDC_ARGS( ( const double *, int, int, int, const double *, double * ) );
+STDC_ARGS( ( const double *, const int, const int, const int, const double *, double * ) );
 void   HPL_sdc_update_trail_checksum
-STDC_ARGS( ( double *, const double *, int, const double *, int,
-              int, int, int, const double *, int, int ) );
+STDC_ARGS( ( double *, const double *, const int, const double *, const int,
+              const int, const int, const int, const double *, const int, const int ) );
 void   HPL_sdc_compute_bcast_checksum
-STDC_ARGS( ( const double *, int, int, const double *, int, const double *,
-              int, const double *, double * ) );
+STDC_ARGS( ( const double *, const int, const int, const double *, const int, const double *,
+              const int, const double *, double * ) );
 
 /* Verification (HPL_sdc_verify.c) */
 int    HPL_sdc_verify_checksum
-STDC_ARGS( ( double, double, double ) );
+STDC_ARGS( ( const double, const double, const double ) );
 int    HPL_sdc_verify_panel
-STDC_ARGS( ( const double *, int, int, int, const double *,
-              const double *, double ) );
+STDC_ARGS( ( const double *, const int, const int, const int, const double *,
+              const double *, const double ) );
 int    HPL_sdc_verify_trailing
-STDC_ARGS( ( const double *, int, int, int, const double *, const double *, double ) );
+STDC_ARGS( ( const double *, const int, const int, const int, const double *, const double *, const double ) );
 
 /* Fault logging and reporting (HPL_sdc_report.c) */
 void   HPL_sdc_log_init
 STDC_ARGS( ( HPL_T_SDC_LOG *, MPI_Comm ) );
 void   HPL_sdc_log_fault
-STDC_ARGS( ( HPL_T_SDC_LOG *, int, int, int,
-              HPL_T_SDC_FAULT_TYPE, int, int, int,
-              double, double ) );
+STDC_ARGS( ( HPL_T_SDC_LOG *, const int, const int, const int,
+              const HPL_T_SDC_FAULT_TYPE, const int, const int, const int,
+              const double, const double ) );
 void   HPL_sdc_report_and_aggregate
-STDC_ARGS( ( HPL_T_SDC_LOG *, MPI_Comm, int ) );
+STDC_ARGS( ( HPL_T_SDC_LOG *, MPI_Comm, const int ) );
 void   HPL_sdc_log_cleanup
 STDC_ARGS( ( HPL_T_SDC_LOG * ) );
 
 /* Fault injection - testing only (HPL_sdc_inject.c) */
 #ifdef HPL_SDC_INJECT
 void   HPL_sdc_inject_bitflip
-STDC_ARGS( ( double *, int, int ) );
+STDC_ARGS( ( double *, const int, const int ) );
 void   HPL_sdc_inject_random
-STDC_ARGS( ( double *, int, double ) );
+STDC_ARGS( ( double *, const int, const double ) );
 void   HPL_sdc_inject_at
-STDC_ARGS( ( double *, int, int, double ) );
+STDC_ARGS( ( double *, const int, const int, const double ) );
 #endif
 
 #endif /* HPL_SDC_CHECK */

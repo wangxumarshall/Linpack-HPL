@@ -297,12 +297,13 @@ void HPL_pdtrsv
    {
       double cs_x = 0.0;
       double _mean = 0.0, _var = 0.0, _std = 0.0;
-      int _i, _outliers = 0;
+      int _i, _outliers = 0, _bad = 0;
       for( _i = 0; _i < Anq; _i++ ) cs_x += XR[_i];
       /* Check for NaN/Inf in solution */
-      if( cs_x != cs_x || cs_x > 1.0e300 || cs_x < -1.0e300 )
+      if( isnan(cs_x) || isinf(cs_x) )
       {
          int _myrank;
+         _bad = 1;
          MPI_Comm_rank( GRID->all_comm, &_myrank );
          HPL_sdc_log_fault( &sdc_log_global, _myrank,
             GRID->myrow, GRID->mycol,
@@ -313,7 +314,7 @@ void HPL_pdtrsv
             " on rank %d (cs=%e)", _myrank, cs_x );
       }
       /* Statistical anomaly detection: outliers beyond 6-sigma */
-      if( Anq > 1 )
+      if( !_bad && Anq > 1 )
       {
          _mean = cs_x / (double)Anq;
          for( _i = 0; _i < Anq; _i++ )
@@ -323,7 +324,7 @@ void HPL_pdtrsv
          }
          _var /= (double)( Anq - 1 );
          _std = sqrt( _var );
-         if( _std > 0.0 )
+         if( _std > 0.0 && !isnan(_std) && !isinf(_std) )
          {
             for( _i = 0; _i < Anq; _i++ )
             {

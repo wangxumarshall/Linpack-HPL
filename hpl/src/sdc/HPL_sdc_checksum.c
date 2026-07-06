@@ -9,11 +9,11 @@
 void HPL_sdc_init_weights
 (
    double * w,
-   int      n
+   const int n
 )
 #else
 void HPL_sdc_init_weights( w, n )
-   double * w; int n;
+   double * w; const int n;
 #endif
 {
 /*
@@ -23,9 +23,10 @@ void HPL_sdc_init_weights( w, n )
  * window to prevent overflow. w[i] = 2^(i % HPL_SDC_WEIGHT_WINDOW)
  */
    int i;
+   if( !w || n <= 0 ) return;
    for( i = 0; i < n; i++ )
    {
-      w[i] = (double)( 1U << ( i % HPL_SDC_WEIGHT_WINDOW ) );
+      w[i] = (double)( 1ULL << ( (unsigned int)i % HPL_SDC_WEIGHT_WINDOW ) );
    }
 }
 
@@ -33,67 +34,79 @@ void HPL_sdc_init_weights( w, n )
 double HPL_sdc_col_checksum
 (
    const double * A,
-   int            lda,
-   int            m,
-   int            n,
+   const int      lda,
+   const int      m,
+   const int      n,
    const double * weights
 )
 #else
 double HPL_sdc_col_checksum( A, lda, m, n, weights )
-   const double * A; int lda, m, n; const double * weights;
+   const double * A; const int lda, m, n; const double * weights;
 #endif
 {
 /*
  * Purpose
  * =======
- * Compute weighted column checksum: cs = sum_j (sum_i w[i] * A[i][j])
+ * Compute weighted column checksum with Kahan compensated summation:
+ * cs = sum_j (sum_i w[i] * A[i][j])
  */
-   double cs = 0.0;
+   double sum = 0.0, c = 0.0, y, t;
    int i, j;
+
+   if( !A || lda < m || m <= 0 || n <= 0 ) return 0.0;
 
    for( j = 0; j < n; j++ )
    {
-      double col_sum = 0.0;
       for( i = 0; i < m; i++ )
       {
-         col_sum += weights[i] * A[i + j * lda];
+         double w = weights ? weights[i] : 1.0;
+         y = w * A[i + (size_t)j * lda] - c;
+         t = sum + y;
+         c = ( t - sum ) - y;
+         sum = t;
       }
-      cs += col_sum;
    }
-   return cs;
+   return sum;
 }
 
 #ifdef STDC_HEADERS
 void HPL_sdc_panel_checksum
 (
    const double * A,
-   int            lda,
-   int            m,
-   int            n,
+   const int      lda,
+   const int      m,
+   const int      n,
    const double * weights,
    double       * cs_out
 )
 #else
 void HPL_sdc_panel_checksum( A, lda, m, n, weights, cs_out )
-   const double * A; int lda, m, n;
+   const double * A; const int lda, m, n;
    const double * weights; double * cs_out;
 #endif
 {
 /*
  * Purpose
  * =======
- * Compute per-column checksums for a panel: cs[k] = sum_i w[i]*A[i][k]
+ * Compute per-column checksums for a panel using Kahan summation:
+ * cs[k] = sum_i w[i]*A[i][k]
  */
    int i, k;
 
+   if( !A || !cs_out || lda < m || m <= 0 || n <= 0 ) return;
+
    for( k = 0; k < n; k++ )
    {
-      double s = 0.0;
+      double sum = 0.0, c = 0.0, y, t;
       for( i = 0; i < m; i++ )
       {
-         s += weights[i] * A[i + k * lda];
+         double w = weights ? weights[i] : 1.0;
+         y = w * A[i + (size_t)k * lda] - c;
+         t = sum + y;
+         c = ( t - sum ) - y;
+         sum = t;
       }
-      cs_out[k] = s;
+      cs_out[k] = sum;
    }
 }
 
@@ -102,87 +115,106 @@ void HPL_sdc_update_trail_checksum
 (
    double       * cs_trail,
    const double * L2,
-   int            ldl2,
+   const int      ldl2,
    const double * U,
-   int            ldu,
-   int            mp,
-   int            jb,
-   int            nn,
+   const int      ldu,
+   const int      mp,
+   const int      jb,
+   const int      nn,
    const double * weights,
-   int            cs_off,
-   int            transa
+   const int      cs_off,
+   const int      transa
 )
 #else
 void HPL_sdc_update_trail_checksum( cs_trail, L2, ldl2, U, ldu,
                                      mp, jb, nn, weights, cs_off, transa )
-   double * cs_trail; const double * L2; int ldl2;
-   const double * U; int ldu, mp, jb, nn; const double * weights;
-   int cs_off, transa;
+   double * cs_trail; const double * L2; const int ldl2;
+   const double * U; const int ldu, mp, jb, nn; const double * weights;
+   const int cs_off, transa;
 #endif
 {
 /*
  * Purpose
  * =======
  * Incremental checksum update for trailing matrix update A -= L2 * U.
- *
- * cs_trail[cs_off+j] -= sum_k cs_L2[k] * U[k][j]
- * where cs_L2[k] = sum_i w[i] * L2[i][k]
- *
- * transa == HplNoTrans: U is jb x nn col-major, access U[k + j*ldu]
- * transa == HplTrans:   U is nn x jb col-major, access U[j + k*ldu]
- *
- * Cost: O(mp*jb + jb*nn) vs main dgemm O(mp*jb*nn)
- * Overhead ratio: ~1/min(mp,nn) << 1
+ * Using Kahan compensated summation to minimize numerical drift.
  */
    int i, j, k;
    double cs_L2[512];
-   double * cs_l2_ptr;
+   double * cs_l2_ptr = NULL;
    int    alloc = 0;
+
+   if( !cs_trail || !L2 || !U || mp <= 0 || jb <= 0 || nn <= 0 ) return;
 
    if( jb > 512 )
    {
       cs_l2_ptr = (double *)malloc( (size_t)jb * sizeof(double) );
-      if( cs_l2_ptr == NULL )
-      { HPL_pabort( __LINE__, "HPL_sdc_update_trail_checksum", "Memory allocation failed" ); }
-      alloc = 1;
+      if( cs_l2_ptr != NULL ) alloc = 1;
    }
-   else
+   if( !cs_l2_ptr )
    {
-      cs_l2_ptr = cs_L2;
+      if( jb <= 512 ) {
+         cs_l2_ptr = cs_L2;
+      } else {
+         int b;
+         for( b = 0; b < jb; b += 512 )
+         {
+            int blk = ( jb - b < 512 ) ? ( jb - b ) : 512;
+            HPL_sdc_panel_checksum( L2 + (size_t)b * ldl2, ldl2, mp, blk, weights, cs_L2 );
+            if( transa == HplTrans ) {
+               for( j = 0; j < nn; j++ ) {
+                  double sum = 0.0, c = 0.0, y, t;
+                  for( k = 0; k < blk; k++ ) {
+                     y = cs_L2[k] * U[j + (size_t)(b + k) * ldu] - c;
+                     t = sum + y; c = ( t - sum ) - y; sum = t;
+                  }
+                  cs_trail[cs_off + j] -= sum;
+               }
+            } else {
+               for( j = 0; j < nn; j++ ) {
+                  double sum = 0.0, c = 0.0, y, t;
+                  for( k = 0; k < blk; k++ ) {
+                     y = cs_L2[k] * U[(b + k) + (size_t)j * ldu] - c;
+                     t = sum + y; c = ( t - sum ) - y; sum = t;
+                  }
+                  cs_trail[cs_off + j] -= sum;
+               }
+            }
+         }
+         return;
+      }
    }
 
-   for( k = 0; k < jb; k++ )
-   {
-      double s = 0.0;
-      for( i = 0; i < mp; i++ )
-      {
-         s += ( weights ? weights[i] : 1.0 ) * L2[i + k * ldl2];
-      }
-      cs_l2_ptr[k] = s;
-   }
+   HPL_sdc_panel_checksum( L2, ldl2, mp, jb, weights, cs_l2_ptr );
 
    if( transa == HplTrans )
    {
       for( j = 0; j < nn; j++ )
       {
-         double upd = 0.0;
+         double sum = 0.0, c = 0.0, y, t;
          for( k = 0; k < jb; k++ )
          {
-            upd += cs_l2_ptr[k] * U[j + k * ldu];
+            y = cs_l2_ptr[k] * U[j + (size_t)k * ldu] - c;
+            t = sum + y;
+            c = ( t - sum ) - y;
+            sum = t;
          }
-         cs_trail[cs_off + j] -= upd;
+         cs_trail[cs_off + j] -= sum;
       }
    }
    else
    {
       for( j = 0; j < nn; j++ )
       {
-         double upd = 0.0;
+         double sum = 0.0, c = 0.0, y, t;
          for( k = 0; k < jb; k++ )
          {
-            upd += cs_l2_ptr[k] * U[k + j * ldu];
+            y = cs_l2_ptr[k] * U[k + (size_t)j * ldu] - c;
+            t = sum + y;
+            c = ( t - sum ) - y;
+            sum = t;
          }
-         cs_trail[cs_off + j] -= upd;
+         cs_trail[cs_off + j] -= sum;
       }
    }
 
@@ -193,49 +225,72 @@ void HPL_sdc_update_trail_checksum( cs_trail, L2, ldl2, U, ldu,
 void HPL_sdc_compute_bcast_checksum
 (
    const double * L2,
-   int            ldl2,
-   int            ml2,
+   const int      ldl2,
+   const int      ml2,
    const double * L1,
-   int            jb_l1,
+   const int      jb_l1,
    const double * DPIV,
-   int            jb,
+   const int      jb,
    const double * weights,
    double       * cs_out
 )
 #else
 void HPL_sdc_compute_bcast_checksum( L2, ldl2, ml2, L1, jb_l1, DPIV, jb, weights, cs_out )
-   const double * L2; int ldl2, ml2; const double * L1; int jb_l1;
-   const double * DPIV; int jb; const double * weights; double * cs_out;
+   const double * L2; const int ldl2, ml2; const double * L1; const int jb_l1;
+   const double * DPIV; const int jb; const double * weights; double * cs_out;
 #endif
 {
 /*
  * Purpose
  * =======
  * Compute checksum of the broadcast buffer (L2 + L1 + DPIV).
- *
- * L2 holds ml2 rows x jb cols of the panel, laid out with leading
- * dimension ldl2 (ldl2 >= ml2). We sum only the ml2*jb real panel
- * entries, NOT the stride padding, so the checksum is independent of
- * the memory layout and matches across processes with different ldl2.
- * Weighted summation is applied to L2 rows to detect composite (+e/-e) errors.
  */
-   double cs = 0.0;
+   double sum = 0.0, c = 0.0, y, t;
    int i, k;
 
-   /* Checksum L2 (sum real panel entries with row weights) */
-   for( k = 0; k < jb; k++ )
-      for( i = 0; i < ml2; i++ )
-         cs += ( weights ? weights[i] : 1.0 ) * L2[i + k * ldl2];
+   if( !cs_out ) return;
+
+   /* Checksum L2 */
+   if( L2 && ml2 > 0 && jb > 0 )
+   {
+      for( k = 0; k < jb; k++ )
+      {
+         for( i = 0; i < ml2; i++ )
+         {
+            double w = weights ? weights[i] : 1.0;
+            y = w * L2[i + (size_t)k * ldl2] - c;
+            t = sum + y;
+            c = ( t - sum ) - y;
+            sum = t;
+         }
+      }
+   }
 
    /* Checksum L1 */
-   for( i = 0; i < jb_l1 * jb_l1; i++ )
-      cs += L1[i];
+   if( L1 && jb_l1 > 0 )
+   {
+      for( i = 0; i < jb_l1 * jb_l1; i++ )
+      {
+         y = L1[i] - c;
+         t = sum + y;
+         c = ( t - sum ) - y;
+         sum = t;
+      }
+   }
 
    /* Checksum DPIV */
-   for( i = 0; i < jb; i++ )
-      cs += DPIV[i];
+   if( DPIV && jb > 0 )
+   {
+      for( i = 0; i < jb; i++ )
+      {
+         y = DPIV[i] - c;
+         t = sum + y;
+         c = ( t - sum ) - y;
+         sum = t;
+      }
+   }
 
-   *cs_out = cs;
+   *cs_out = sum;
 }
 
 #endif /* HPL_SDC_CHECK */

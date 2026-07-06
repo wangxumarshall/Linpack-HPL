@@ -328,11 +328,6 @@ void HPL_pdgesvK1
    }
  
    if( panel ) free( panel );
-#ifdef HPL_SDC_CHECK
-   /* Aggregate and report SDC faults from all processes */
-   HPL_sdc_report_and_aggregate( &sdc_log_global, GRID->all_comm, myrank );
-   HPL_sdc_log_cleanup( &sdc_log_global );
-#endif
 /*
  * End of HPL_pdgesvK1
  */

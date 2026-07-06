@@ -225,7 +225,7 @@ test_injection_models( void )
       HPL_sdc_inject_random( A, 16, 0.25 );  /* corrupt ~25% */
       result = HPL_sdc_verify_panel( A, 4, 4, 4, w, cs_before,
                                      HPL_SDC_THRESHOLD );
-      test_check( result == 1, "Random corruption: detected by checksum" );
+      test_check( result > 0, "Random corruption: detected by checksum" );
    }
 
    /* --- Model 3: Stuck-at-zero --- */

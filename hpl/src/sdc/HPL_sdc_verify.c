@@ -8,117 +8,109 @@
 #ifdef STDC_HEADERS
 int HPL_sdc_verify_checksum
 (
-   double cs_expected,
-   double cs_computed,
-   double threshold
+   const double cs_expected,
+   const double cs_computed,
+   const double threshold
 )
 #else
 int HPL_sdc_verify_checksum( cs_expected, cs_computed, threshold )
-   double cs_expected, cs_computed, threshold;
+   const double cs_expected, cs_computed, threshold;
 #endif
 {
 /*
  * Purpose
  * =======
- * Compare two checksums with relative threshold.
- * Returns HPL_SUCCESS (0) if match, 1 if mismatch (SDC detected).
+ * Compare two checksums with adaptive relative/absolute threshold.
+ * Handles NaN and Inf properly.
+ * Returns 0 if match, 1 if mismatch (SDC detected).
  */
    double denom, dev;
 
-   dev = cs_computed - cs_expected;
-   if( dev < 0.0 ) dev = -dev;
+   if( isnan(cs_computed) || isinf(cs_computed) || isnan(cs_expected) || isinf(cs_expected) )
+      return 1;
 
-   denom = ( cs_expected >= 0.0 ? cs_expected : -cs_expected );
-   if( denom < 1.0 ) denom = 1.0;
+   dev = fabs( cs_computed - cs_expected );
+   denom = fabs( cs_expected );
 
-   if( dev / denom > threshold )
-      return 1;  /* SDC detected */
-   else
-      return 0;  /* OK */
+   if( denom < 1.0e-4 )
+   {
+      return ( dev > fmax(threshold, 1.0e-12) ) ? 1 : 0;
+   }
+   return ( ( dev / denom ) > threshold ) ? 1 : 0;
 }
 
 #ifdef STDC_HEADERS
 int HPL_sdc_verify_panel
 (
    const double * A,
-   int            lda,
-   int            m,
-   int            n,
+   const int      lda,
+   const int      m,
+   const int      n,
    const double * weights,
    const double * cs_expected,
-   double         threshold
+   const double   threshold
 )
 #else
 int HPL_sdc_verify_panel( A, lda, m, n, weights, cs_expected, threshold )
-   const double * A; int lda, m, n;
-   const double * weights; const double * cs_expected; double threshold;
+   const double * A; const int lda, m, n;
+   const double * weights; const double * cs_expected; const double threshold;
 #endif
 {
 /*
  * Purpose
  * =======
- * Verify panel checksums: recompute per-column checksums from matrix
- * data and compare against expected values.
- *
- * Returns HPL_SUCCESS (0) if all columns match, 1 if any mismatch.
+ * Verify panel checksums using robust Kahan summation from HPL_sdc_panel_checksum.
+ * Returns number of mismatched columns (0 if all columns match).
  */
-   int k;
-   double cs_computed;
+   int k, failed = 0;
+   double cs_comp;
+
+   if( !A || !cs_expected ) return 0;
 
    for( k = 0; k < n; k++ )
    {
-      double s = 0.0;
-      int i;
-      for( i = 0; i < m; i++ )
-         s += weights[i] * A[i + k * lda];
-      cs_computed = s;
-
-      if( HPL_sdc_verify_checksum( cs_expected[k], cs_computed, threshold ) )
-         return 1;
+      HPL_sdc_panel_checksum( A + (size_t)k * lda, lda, m, 1, weights, &cs_comp );
+      if( HPL_sdc_verify_checksum( cs_expected[k], cs_comp, threshold ) )
+         failed++;
    }
-   return 0;
+   return failed;
 }
 
 #ifdef STDC_HEADERS
 int HPL_sdc_verify_trailing
 (
    const double * A,
-   int            lda,
-   int            m,
-   int            n,
+   const int      lda,
+   const int      m,
+   const int      n,
    const double * cs_expected,
    const double * weights,
-   double         threshold
+   const double   threshold
 )
 #else
 int HPL_sdc_verify_trailing( A, lda, m, n, cs_expected, weights, threshold )
-   const double * A; int lda, m, n;
-   const double * cs_expected; const double * weights; double threshold;
+   const double * A; const int lda, m, n;
+   const double * cs_expected; const double * weights; const double threshold;
 #endif
 {
 /*
  * Purpose
  * =======
- * Verify trailing matrix checksums by full recomputation from matrix
- * data and comparison against expected (incrementally updated) values.
- *
- * Uses the same weights as the checksum computation for consistency.
- *
- * Returns HPL_SUCCESS (0) if match, 1 if mismatch.
+ * Verify trailing matrix checksums by full recomputation from matrix data.
+ * Returns number of mismatched columns (0 if all match).
  */
-   int j;
+   int j, failed = 0;
+   double cs_comp;
+
+   if( !A || !cs_expected ) return 0;
 
    for( j = 0; j < n; j++ )
    {
-      double s = 0.0;
-      int i;
-      for( i = 0; i < m; i++ )
-         s += ( weights ? weights[i] : 1.0 ) * A[i + j * lda];
-
-      if( HPL_sdc_verify_checksum( cs_expected[j], s, threshold ) )
-         return 1;
+      HPL_sdc_panel_checksum( A + (size_t)j * lda, lda, m, 1, weights, &cs_comp );
+      if( HPL_sdc_verify_checksum( cs_expected[j], cs_comp, threshold ) )
+         failed++;
    }
-   return 0;
+   return failed;
 }
 
 #endif /* HPL_SDC_CHECK */

@@ -16,7 +16,7 @@
 #
 
 ARCH=${1:-WSL_OpenBLAS}
-TOPDIR="$(cd "$(dirname "$0")/.." && pwd)"
+TOPDIR="$(cd "$(dirname "$0")/../.." && pwd)"
 HPL_LIB="${TOPDIR}/lib/${ARCH}/libhpl.a"
 TEST_SRC="${TOPDIR}/testing/sdc_test/HPL_sdc_test.c"
 TEST_BIN="${TOPDIR}/bin/${ARCH}/xhpl_sdc_test"

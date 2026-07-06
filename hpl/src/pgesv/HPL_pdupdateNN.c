@@ -538,12 +538,10 @@ void HPL_pdupdateNN
                MPI_Comm_rank( PANEL->grid->all_comm, &_myrank );
                for( _dj = 0; _dj < n; _dj++ )
                {
-                  double _s = 0.0; int _di;
+                  double _s = 0.0;
                   double _dev;
-                  for( _di = 0; _di < _mv; _di++ )
-                     _s += ( PANEL->CS_WEIGHTS ? PANEL->CS_WEIGHTS[_di] : 1.0 ) * _Av[_di + _dj * lda];
-                  _dev = _s - PANEL->CS_TRAIL[_dj];
-                  if( _dev < 0.0 ) _dev = -_dev;
+                  HPL_sdc_panel_checksum( _Av + (size_t)_dj * lda, lda, _mv, 1, PANEL->CS_WEIGHTS, &_s );
+                  _dev = fabs( _s - PANEL->CS_TRAIL[_dj] );
                   if( _dev > _maxdev )
                   { _maxdev = _dev; _cs_exp = PANEL->CS_TRAIL[_dj]; _cs_cmp = _s; }
                }
