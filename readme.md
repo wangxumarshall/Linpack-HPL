@@ -193,17 +193,17 @@ $$CS[j] = \sum_{i=0}^{m-1} w[i] \times A[i, j]$$
 
 ```mermaid
 graph TD
-    A[HPL_pdgesvK2 主循环步 j = 0...N] --> B[防线一: JIT 面板准入拦截 HPL_sdc_verify_panel_entry]
-    B -->|发现 NaN/Inf/异常发散| E1[记录 HPL_SDC_FAULT_PANEL_ENTRY 捕获历史 DGEMM 异常]
-    B -->|准入验证通过| C[防线二: 面板 LU 分解 HPL_pdfact & CS_panel 指纹构建]
-    C --> D[计算所有者列广播指纹 CS_bcast & MPI_Allreduce MAX 同步参考值]
-    D --> E[防线三: 面板全局广播 HPL_bcast & 接收后指纹验证 HPL_sdc_verify_checksum]
-    E -->|偏差 dev > 1e-10| E2[记录 HPL_SDC_FAULT_PANEL_BCAST 捕获通信或缓存 SDC]
-    E -->|广播验证通过| F[执行主计算负载: HPL_pdupdate 尾矩阵 DGEMM 更新]
+    A["HPL_pdgesvK2 主循环步 j = 0...N"] --> B["防线一: JIT 面板准入拦截 HPL_sdc_verify_panel_entry"]
+    B -->|发现 NaN/Inf/异常发散| E1["记录 HPL_SDC_FAULT_PANEL_ENTRY 捕获历史 DGEMM 异常"]
+    B -->|准入验证通过| C["防线二: 面板 LU 分解 HPL_pdfact & CS_panel 指纹构建"]
+    C --> D["计算所有者列广播指纹 CS_bcast & MPI_Allreduce MAX 同步参考值"]
+    D --> E["防线三: 面板全局广播 HPL_bcast & 接收后指纹验证 HPL_sdc_verify_checksum"]
+    E -->|偏差 dev > 1e-10| E2["记录 HPL_SDC_FAULT_PANEL_BCAST 捕获通信或缓存 SDC"]
+    E -->|广播验证通过| F["执行主计算负载: HPL_pdupdate 尾矩阵 DGEMM 更新"]
     F -->|完成当前步| A
-    A -->|全部分解完毕| G[防线四: 回代求解 HPL_pdtrsv & 6-Sigma 解向量检查]
-    G --> H[计算全局缩放残差 ||Ax-b||_oo / ... < 16.0]
-    H --> I[全流程结束: HPL_sdc_report_and_aggregate 聚合故障拓扑报告]
+    A -->|全部分解完毕| G["防线四: 回代求解 HPL_pdtrsv & 6-Sigma 解向量检查"]
+    G --> H["计算全局缩放残差 ||Ax-b||_oo / ... < 16.0"]
+    H --> I["全流程结束: HPL_sdc_report_and_aggregate 聚合故障拓扑报告"]
 ```
 
 #### 防线一：JIT 面板准入拦截（Line of Defense 1 - 历史 DGEMM 异常捕获）
