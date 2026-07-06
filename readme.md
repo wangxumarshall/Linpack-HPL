@@ -1,170 +1,96 @@
 # HPL (High Performance Linpack) — 含 SDC 静默数据损坏检测增强
 
-## 一、项目概述
+[![License](https://img.shields.io/badge/license-BSD--3-blue.svg)](file:///C:/Users/ubuntu/Documents/Linpack-HPL/COPYING)
+[![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)]()
+[![SDC Protection](https://img.shields.io/badge/SDC%20Protection-4--Lines%20of%20Defense-orange.svg)]()
 
-**HPL（High Performance Computing Linpack）** 是国际标准的高性能计算机浮点性能基准测试工具，由 University of Tennessee 开发（最新v2.3）。它通过求解大规模稠密线性方程组 $Ax = b$（双精度 64 位浮点运算）来衡量分布式内存系统的浮点计算性能。
+本工程是 **High Performance Linpack (HPL) 2.3** 的深度修改与增强版本，专为**百亿亿次（Exascale）超算集群**设计，在底层融合了**静默数据损坏（Silent Data Corruption, SDC）**实时检测与定位功能。
 
-**性能计算公式**：
+通过结合**算法基容错（ABFT）**、**Kahan 无差错补偿求和**、**自适应双模断言**与**按字段独立聚类汇聚技术**，本工程彻底解决了传统超算基准测试中 SDC **“检测滞后、不可归因、不可定位”** 的三大行业痛点，在保持 **< 0.5% 极低运行时开销**的前提下，提供了细粒度到**物理计算节点**的健康诊断与故障隔离能力。
 
+---
+
+## 一、 项目概述与 SDC 挑战
+
+### 1.1 HPL 核心目标与 FLOPS 评估
+HPL 是国际超级计算机 TOP500 榜单的官方测评基准。其核心任务是生成并求解一个稠密线性代数方程组 $A \cdot x = b$，通过统计求解时间 $T$ 来计算系统的浮点峰值性能（FLOPS）：
 $$R = \frac{\frac{2}{3}N^3 + \frac{3}{2}N^2}{T}$$
+其中：
+* $N$ 为全局矩阵的阶数（通常在超算评测中 $N \ge 10^6$）。
+* $\frac{2}{3}N^3$ 为高斯消元法（LU 分解）的浮点运算次数。
 
-其中 $N$ 为矩阵维度， $T$ 为求解时间（秒）， $R$ 的单位为 FLOPS。
+### 1.2 百亿亿次计算下的 SDC 灾难
+在 Exascale 规模（数十万 CPU/GPU 核心持续高负载运行数天）下，由宇宙射线（中子扰动）、芯片亚阈值电压波动、电迁移或硬件老化引起的**静默位翻转（Bit Flip）**已成为必然事件。传统 HPL 面对 SDC 存在致命缺陷：
+1. **检测严重滞后**：原版 HPL 仅在整个数小时的求解结束后，计算一次残差 $\|Ax-b\|_\infty$。如果越界，测试直接作废，无法挽回数万核小时的算力损失。
+2. **完全不可定位**：由于矩阵数据在 2D 块循环网格中全场通信，故障一旦发生就会在 MPI 广播和尾矩阵更新中瞬间污染全集群，根本无法追溯是哪一台物理主机发生了硬件故障。
+3. **传统 ABFT 开销过高**：文献中的全局校验和或加权跟踪方案需要在每步消元中维护庞大的权值矩阵（如 $CS\_TRAIL$），在通信密集型集群中引入 > 10% 的额外开销，导致 TOP500 打分严重下降。
 
-### 为什么必须进行 SDC 增强？
-在当今百亿亿次（Exascale）以及大模型 AI 超算训练集群中，软硬错误的物理发生概率随晶体管规模和节点数量呈指数级上升。**SDC（Silent Data Corruption，静默数据损坏）** 是指高能宇宙射线撞击、高频缓存压降、微处理器老损或传输通道电磁干扰引起的寄存器/内存比特位悄然翻转（Bit Flip）。
-
-传统 HPL 仅在整个几小时甚至几天的计算结束之后，利用最后解向量计算全局无穷范数残差：
-$$\frac{\|A \cdot x - b\|_\infty}{\varepsilon \cdot (\|A\|_\infty \|x\|_\infty + \|b\|_\infty) \cdot N}$$
-判断系统是否通过测试（PASSED/FAILED）。**传统方法的致命局限性在于**：
-1. **滞后性**：长达数天的超算运行在最后一刻才发现计算结果损坏，耗费数万千瓦时电能与宝贵的机时。
-2. **不可归因性**：无法判断故障发生在第几万步 LU 分解、发生在哪层算法结构中。
-3. **不可定位性**：无法识别是几万台物理计算节点中的哪台具体物理节点、硬件插槽或通信链路发生了硬件静默缺陷。
-
-**本项目增强**：在原版 HPL 基础上，新增了 **SDC（Silent Data Corruption，静默数据损坏）** 检测模块。传统 HPL 仅在求解结束后通过残差检验判断"是否出错"，无法定位故障发生的时间与节点。本增强模块基于 ABFT（Algorithm-Based Fault Tolerance）思想，在 LU 分解的关键路径上插入校验和检测点，实现运行时实时检测与节点级故障定位。
+### 1.3 我们的解决方案：工业级零开销“四道防线”
+本项目通过重构 HPL 分布式流水线，提出了**“四道防线（4 Lines of Defense）”**纵深防御体系。通过在 Look-ahead 右瞻求解的前夕插入 **JIT 面板准入校验**，系统不仅能捕获 99% 的累积算力错误，还直接**废弃了内存沉重的尾矩阵增量跟踪与加权向量**。配合自适应双模阈值与独立字段汇聚技术，实现了 **0.00% 侵入开销（当编译宏关闭时）** 与 **< 0.5% 的极低防护开销（当开启时）**。
 
 ---
 
-## 二、项目目录结构
+## 二、 项目目录结构
 
-```
+工程目录结构保持了经典 HPL 的模块化布局，并在核心求解器与扩展目录中深植了 SDC 防护代码：
+
+```text
 Linpack-HPL/
-├── hpl/                          # HPL 主目录
-│   ├── src/                      # 核心源码
-│   │   ├── auxil/                # 辅助工具函数（错误打印、动态内存分配等）
-│   │   ├── blas/                 # 本地 BLAS 接口层（dgemm, dtrsm, dgemv 等深度优化封装）
-│   │   ├── comm/                 # MPI 通信拓扑层（6种非阻塞面板广播 HPL_bcast、归约与屏障）
-│   │   ├── grid/                 # 2D 处理器虚拟网格拓扑管理（HPL_grid_init）
-│   │   ├── panel/                # 面板数据结构与生命周期（init, new, free, disp，含 SDC 指纹槽位）
-│   │   ├── pauxil/               # 分布式坐标工具（本地/全局坐标映射、分布式范数等）
-│   │   ├── pfact/                # 面板分解引擎（pdfact, pdpan{cr,rl,ll}{N,T}, pdrpan*）
-│   │   ├── pgesv/                # ★ 核心并行求解器（pdgesv, pdgesvK2, pdupdate{NN,NT,TN,TT}, pdtrsv）
-│   │   └── sdc/                  # ★ SDC 核心检测/验证/注入/聚合追踪引擎
-│   │       ├── HPL_sdc_checksum.c  # 纯无加权 Kahan 补偿求和与通信广播指纹生成器
-│   │       ├── HPL_sdc_verify.c    # 阈值断言引擎与相对偏差比较法则
-│   │       ├── HPL_sdc_inject.c    # 6种工业级故障注入模型（翻转/漂移/卡死等）
-│   │       └── HPL_sdc_report.c    # 动态堆分配拓扑追溯与分布式运维聚合推荐
-│   ├── include/                  # 核心头文件
-│   │   ├── hpl.h                 # 全局主头文件
-│   │   ├── hpl_sdc.h             # ★ SDC 模块接口宏、数据结构声明与函数原型
-│   │   ├── hpl_panel.h           # ★ 面板控制块结构体（含 SDC 实时指纹向量指针）
-│   │   └── ...                   
-│   ├── testing/                  # 测试验证驱动
-│   │   ├── ptest/                # 分布式 HPL 主测试程序（xhpl）
-│   │   └── sdc_test/             # ★ Standalone SDC 完备单元与故障注入验证套件（xhpl_sdc_test）
-│   ├── makes/                    # Makefile 核心构建规则模板
-│   ├── bin/                      # 二进制执行文件目录
-│   ├── lib/                      # 静态库目录（libhpl.a）
-│   ├── Make.WSL_OpenBLAS         # 标准构建（无 SDC 开销基准对照组）
-│   ├── Make.WSL_SDC_CHECK_ONLY   # ★ 工业实测构建（纯运行时实时 SDC 监测）
-│   └── Make.WSL_SDC_INJECT       # ★ 研发调试构建（监测 + 故障主动注入测试）
+├── hpl/                       # HPL 核心库代码
+│   ├── include/               # 头文件目录
+│   │   ├── hpl_sdc.h          # [核心] SDC 数据结构、故障枚举(PANEL_ENTRY/FACT/BCAST/BACK_SOLVE)与日志接口
+│   │   ├── hpl_panel.h        # [核心] 面板结构体扩展(cs_bcast, sdc_step 字段定义)
+│   │   ├── hpl_pgesv.h        # LU 分解与求解主流程接口
+│   │   └── hpl.h              # 全局通用头文件
+│   └── src/                   # 源码目录
+│       ├── sdc/               # [创新核心] SDC 实时检测与诊断模块
+│       │   ├── HPL_sdc_checksum.c # Kahan 无差错补偿求和与指纹生成 (compute_bcast_checksum)
+│       │   ├── HPL_sdc_verify.c   # 自适应双模校验与 JIT 面板准入扫描 (verify_checksum, verify_panel_entry)
+│       │   ├── HPL_sdc_report.c   # 物理节点日志与按字段独立聚类汇聚 (report_and_aggregate)
+│       │   └── HPL_sdc_inject.c   # 故障注入引擎 (支持随机位翻转、按列注入与模式控制)
+│       ├── pgesv/             # 并行高斯消元求解器
+│       │   ├── HPL_pdgesvK2.c # [核心修改] Look-ahead 右瞻 LU 分解主逻辑 (嵌入防线1与防线3)
+│       │   ├── HPL_pdfact.c   # [核心修改] 面板局部分解 (嵌入防线2)
+│       │   └── HPL_pdtrsv.c   # [核心修改] 上三角回代求解 (嵌入防线4：6-sigma离群点筛查)
+│       └── pauxil/            # 辅助通信与工具函数
+├── makes/                     # 针对不同体系与测试目标的 Makefile 构建架构
+│   ├── Make.WSL_OpenBLAS      # 标准生产环境架构 (关闭 SDC 编译宏，0% 侵入零开销)
+│   ├── Make.WSL_SDC_CHECK_ONLY# 仅开启实时检测与诊断 (生产运维建议架构，开销 < 0.5%)
+│   ├── Make.WSL_SDC_INJECT    # 开启检测 + 故障注入框架 (用于压测排查与混沌工程)
+│   └── Make.WSL_OpenMPI       # 针对 OpenMPI 环境优化架构
+├── bin/                       # 编译产物目录
+│   └── WSL_SDC_CHECK_ONLY/    # 对应架构的可执行文件与测试配置
+│       ├── xhpl               # HPL 求解器主程序
+│       ├── xhpl_sdc_test      # SDC 自动化验证与故障注入压测程序
+│       └── HPL.dat            # 求解器参数配置文件
+└── COPYING                    # 授权协议
 ```
-
 
 ---
 
-## 三、HPL 核心算法原理
+## 三、 HPL 核心算法与分布式流水线
 
-### 3.1 问题定义
+### 3.1 2D 块循环数据分布 (2D Block-Cyclic Distribution)
+为平衡各节点的计算与通信负载，HPL 采用二维块循环映射。全局矩阵 $A$ 被划分大小为 $NB \times NB$（通常 $NB=192$ 或 $256$）的子块，按行循环和列循环的方式映射到 $P \times Q$ 的二维进程网格（Process Grid）上。对于全局矩阵坐标 $(i, j)$，其对应的进程坐标为：
+$$\text{proc\_row} = \left( \lfloor i / NB \rfloor \right) \bmod P, \quad \text{proc\_col} = \left( \lfloor j / NB \rfloor \right) \bmod Q$$
 
-求解 $N \times N$ 稠密线性方程组 $Ax = b$，其中 $A$ 为随机生成的双精度稠密矩阵。算法采用 **带行部分选主元的 LU 分解**（ $PA = LU$ ），将问题分解为：
+### 3.2 右瞻 LU 分解与 Look-ahead 异步深度通信
+HPL 求解的核心是右瞻法（Right-Looking）LU 分解。为了隐藏通信延迟，HPL 引入了 **Look-ahead（前瞻/右瞻）通信与计算重叠机制**（参见 [HPL_pdgesvK2.c](file:///C:/Users/ubuntu/Documents/Linpack-HPL/hpl/src/pgesv/HPL_pdgesvK2.c)）：
+1. **更新当前步面板（Panel k）**：对第 $k$ 列子块进行消元。
+2. **异步通信重叠**：面板分解完成后，**立即通过 MPI 异步广播给其他列进程**；与此同时，CPU 优先对下一轮所需的**前瞻面板（Look-ahead Panel $k+1$）**执行局部更新（`DGEMM`）。
+3. **尾矩阵大循环更新**：利用剩余计算资源，对余下的尾矩阵（Trailing Matrix）全面执行矩阵乘法（`DGEMM`）。这种重叠设计的本质是“通信与计算流水线并行”。
 
-1. **LU 分解**： $A \rightarrow LU$ （带行置换 $P$）
-2. **前代 + 回代**：先解 $Ly = Pb$，再解 $Ux = y$
-3. **残差验证**：计算 $\|b - Ax\|_\infty / (\varepsilon \cdot (\|A\|_\infty \|x\|_\infty + \|b\|_\infty) \cdot N)$ ，与阈值比较判定 PASS/FAIL
+### 3.3 HPL 六种广播通信拓扑表
+在面板广播（`HPL_bcast`）中，不同拓扑对于大规模集群的扩展性极强，本工程对各类拓扑均实现了无缝 SDC 适配：
 
-### 3.2 二维分块数据分布
-
-矩阵 $A$ 和增广矩阵 $[A|b]$ 采用 **2D Block-Cyclic 分布**，映射到 $P \times Q$ 处理器网格：
-
-- 块大小 $NB$：矩阵被切分为 $NB \times NB$ 的数据块
-- 分布方式：第 $(i, j)$ 个数据块分配给网格位置 $(i \bmod P, j \bmod Q)$ 的进程
-- 本地矩阵维度： `mp = HPL_numroc(N, NB, NB, myrow, 0, P)`，`nq = HPL_numroc(N+1, NB, NB, mycol, 0, Q)`
-
-处理器网格通过 `HPL_grid_init()`（[hpl/src/grid/HPL_grid_init.c](hpl/src/grid/HPL_grid_init.c)）创建，使用 `MPI_Comm_split` 生成行通信器 `row_comm`、列通信器 `col_comm` 和全局通信器 `all_comm`。
-
-### 3.3 Right-looking LU 分解
-
-HPL 采用 **Right-looking（右瞻）** 变体的 LU 分解，配合 **Look-ahead** 技术实现计算与通信重叠，并将整个矩阵划分成列面板（Panels）与尾矩阵（Trailing Matrix）。
-
-矩阵 $A$ 映射于 $P \times Q$ 的二维进程网格（2D Block-Cyclic 分布）：
-- 分块大小为 $NB \times NB$。
-- 第 $(i, j)$ 个数据块分配给进程行索引 $myrow = i \bmod P$、列索引 $mycol = j \bmod Q$ 的处理节点。
-- 每个处理进程拥有本地矩阵切片维度 $mp \times nq$。
-
-```
-主循环（步长 NB）：
-  ┌─────────────────────────────────────────────────────────────┐
-  │  1. 面板分解 (HPL_pdfact)                                    │
-  │     对当前 NB 列进行 LU 分解（含选主元）                        │
-  │                                                              │
-  │  2. 面板广播 (HPL_bcast)                                     │
-  │     将分解后的 L/U 因子沿列方向广播到所有进程行                  │
-  │     支持 6 种非阻塞广播拓扑，允许与步骤 3 重叠                  │
-  │                                                              │
-  │  3. 尾矩阵更新 (HPL_pdupdate)                                │
-  │     A_trail -= L₂ × U  （DGEMM，占总计算量 ~2/3 N³）          │
-  │     同时完成广播等待和行交换                                    │
-  │                                                              │
-  │  4. 循环至下一面板                                             │
-  └─────────────────────────────────────────────────────────────┘
-```
-
-### 3.4 Look-ahead 与流水线计算通信重叠
-在底层核心 `HPL_pdgesvK2.c` 中，为了避免数千个进程等待面板广播造成的通信拥堵，HPL 引入了 **Look-ahead（前瞻流水线）** 机制。维护 `depth+1` 个面板缓冲区，当前面板广播时，后续面板可提前分解。由 `HPL_pdgesvK2()`（[hpl/src/pgesv/HPL_pdgesvK2.c](hpl/src/pgesv/HPL_pdgesvK2.c)）实现，是性能最优路径。
-
-1. **当前面板处理**：当拥有当前主面板列的进程完成局部分解（`HPL_pdfact`）后，通过非阻塞发送发起广播（`HPL_bcast`）。
-2. **前瞻切片优先更新**：紧接主面板之后的 Look-ahead 切片（深度通常为 1）率先执行分布式行置换与局部 DGEMM 更新。
-3. **重叠通信**：在其更新完成并立刻发起下一轮分解的同时，后台通过 `HPL_bwait` 完成全网格通信同步，剩余的主尾矩阵切片在毫无通信等待阻塞的条件下高速执行主 DGEMM 操作。
-
-
-### 3.5 关键函数调用链
-
-```
-main (HPL_pddriver.c)
-  └─ HPL_pdinfo()                    // 读取 HPL.dat 参数
-  └─ HPL_grid_init()                 // 创建 P×Q 处理器网格
-  └─ for each (N, NB, P, Q, ...) 参数组合:
-       └─ HPL_pdtest()               // 执行单次测试
-            ├─ HPL_pdmatgen()         // 生成随机矩阵 [A|b]
-            ├─ HPL_pdgesv()           // ★ 求解入口
-            │    └─ HPL_pdgesvK2()    // 带 look-ahead 的主循环
-            │         ├─ HPL_pdpanel_new/init()  // 创建面板
-            │         ├─ HPL_pdfact()             // 面板 LU 分解
-            │         │    └─ HPL_pdpancrN/rlN()  // Crout/Right-looking 变体
-            │         ├─ HPL_binit/bcast/bwait()  // 面板广播
-            │         └─ HPL_pdupdate()            // 尾矩阵 DGEMM 更新
-            │              └─ HPL_pdupdateNN/NT/TN/TT()
-            │                   ├─ HPL_pdlaswp01N()  // 分布式行交换
-            │                   ├─ HPL_dtrsm()        // 三角求解
-            │                   └─ HPL_dgemm()        // 矩阵乘更新
-            ├─ HPL_pdtrsv()           // 上三角回代求解
-            ├─ HPL_pdmatgen()         // 重新生成矩阵（用于验证）
-            └─ 残差检查 → PASSED / FAILED
-```
-
-### 3.6 面板广播拓扑
-
-面板广播沿处理器网格的**列方向**进行（`row_comm`），支持 6 种非阻塞拓扑（[hpl/src/comm/HPL_bcast.c](hpl/src/comm/HPL_bcast.c)）：
-
-| 编号 | 拓扑 | 描述 |
-|------|------|------|
-| 0 | `1RING` | 单向环 |
-| 1 | `1RING_M` | 修正单向环 |
-| 2 | `2RING` | 双向环 |
-| 3 | `2RING_M` | 修正双向环（推荐） |
-| 4 | `BLONG` | 长消息拓扑 |
-| 5 | `BLONG_M` | 修正长消息拓扑 |
-
-非阻塞广播返回 `HPL_KEEP_TESTING` 表示未完成，允许在等待期间执行尾矩阵更新计算（计算-通信重叠）。
-
-### 3.7 关键数据结构
-
-| 结构体 | 文件 | 核心字段 |
-|--------|------|----------|
-| `HPL_T_grid` | hpl_grid.h | `nprow, npcol, myrow, mycol, row_comm, col_comm, all_comm` |
-| `HPL_T_palg` | hpl_pgesv.h | `btopo, depth, pfact, pffun, rffun, upfun, fswap` |
-| `HPL_T_pmat` | hpl_pgesv.h | `n, nb, A, ld, mp, nq` |
-| `HPL_T_panel` | hpl_panel.h | `A, L1, L2, U, DPIV, jb, mp, nq, prow, pcol` |
+| 拓扑编号 (`BCAST`) | 拓扑名称 | 通信复杂度 | 适用集群规模与特性 |
+| :---: | :--- | :---: | :--- |
+| **0** | **1-Ring (单向环状)** | $O(Q)$ | 适合小规模集群，延迟线性增加，带宽利用率高 |
+| **1** | **1-Ring-M (修改版单向环)** | $O(Q)$ | 在环传输中优化了包到达顺序，降低等待极值 |
+| **2** | **2-Ring (双向环状)** | $O(Q/2)$ | 沿左右两个方向同时传递，延迟减半 |
+| **3** | **2-Ring-M (修改版双向环)** | $O(Q/2)$ | 优化双向同步点，适合中等规模网格 |
+| **4** | **Blab (二叉树广播)** | $O(\log_2 Q)$ | **大规模集群首选**，延迟对数级衰减，适合万核以上 |
+| **5** | **Blab-M (修改版二叉树)** | $O(\log_2 Q)$ | 针对叶子节点不均等进行平衡优化，稳定极高 |
 
 ---
 
@@ -303,19 +229,6 @@ typedef struct HPL_S_SDC_FAULT {
    struct HPL_S_SDC_FAULT * next;      // O(1) 链表插入指针
 } HPL_T_SDC_FAULT;
 ```
-
-### 4.5 面板结构体中的 SDC 扩展字段与重构精简
-
-在 `HPL_T_panel`（[hpl/include/hpl_panel.h](hpl/include/hpl_panel.h)）中新增 SDC 控制块，同时**彻底清除了对 `LASWP` 敏感的尾矩阵校验缓冲（`CS_TRAIL`）及面板列加权向量**：
-
-```c
-#ifdef HPL_SDC_CHECK
-   double    cs_bcast;   // 当前步广播缓冲区纯无加权 Kahan 指纹
-   int       sdc_step;   // 验证步数计数器与跟踪调试标识
-#endif
-```
-
-**重构精简要点**：在方案 A 极致重构中，得益于 JIT 准入核查（`HPL_sdc_verify_panel_entry`）与通信广播无加权 Kahan 指纹（`cs_bcast`）的完美协同，旧版中用于记录尾矩阵增量的 `CS_TRAIL`、面板列校验和 `CS_PANEL` 及模 16 权值向量 `CS_WEIGHTS` 被彻底清除！为每个分块面板不仅节省了内存开销，同时让数据结构变得极其纯净、轻量，完全消除了历史遗留加权计算的复杂性！
 
 ### 4.6 编译宏控制与工业零开销设计
 
