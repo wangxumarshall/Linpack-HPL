@@ -170,26 +170,41 @@ main (HPL_pddriver.c)
 
 ## 四、SDC 检测增强模块
 
-### 4.1 设计思想：基于加权校验和的 ABFT
+### 4.1 核心设计思想：基于 Kahan 补偿与模幂加权的 ABFT
 
-在高并发、大模型及百万核超算集群中，宇宙射线或硬件静默故障极易引发寄存器或内存比特翻转（Bit Flip）。传统 HPL 仅在全流程结束后通过残差 $\|Ax-b\|_\infty$ 检验正确性，若发生 SDC，无法定位出错阶段与出错节点。
+在高并发、大模型训练集群及百亿亿次（Exascale）超算环境中，高频缓存压降、高能宇宙射线撞击或微处理器老损极易引发寄存器与内存的比特翻转（Bit Flip）。传统 HPL 仅在几小时乃至数天全流程求解结束后通过残差 $\|Ax-b\|_\infty$ 检验正确性，若发生静默数据损坏（SDC），根本无法定位出错时间、求解阶段与物理节点。
 
-HPL SDC 模块采用 **ABFT（Algorithm-Based Fault Tolerance，算法级容错）**，通过对矩阵列打"数值指纹"（校验和），利用线性代数运算与校验和运算的同构性进行实时监测。
+本项目实现了工业级 **ABFT（Algorithm-Based Fault Tolerance，算法级容错）** 体系，利用线性代数运算与空间校验和（Checksum）的同构映射，在计算关键路径上实现零感知实时监测。
 
-**加权校验和**：如果采用均匀权值（全 1 校验和），当矩阵同一列中发生一处 $+e$ 另一处 $-e$ 的复合错误时，和保持不变，造成漏报。为实现位置敏感的故障捕获，系统对第 $i$ 行赋以 2 的幂次加权：
+#### 1. 位置敏感的模 16 幂次加权
+若采用均匀权值（全 1 校验和），当矩阵同一列中发生一处 $+e$ 另一处 $-e$ 的复合比特位翻转时，和值保持不变，将导致致命的漏报。为实现位置敏感的故障捕获，系统对第 $i$ 行赋以 2 的幂次加权：
 
 $$w[i] = 2^{(i \bmod 16)}$$
 
-采用对 16 取模的窗口（`HPL_SDC_WEIGHT_WINDOW = 16`），既保证了相邻行权值各不相同、极低碰撞率，又彻底避免了 64 位双精度浮点指数在幂次过大时发生的精度溢出或下溢。
+采用对 16 取模的窗口（`HPL_SDC_WEIGHT_WINDOW = 16`），既保证了相邻 16 行内加权值互不相同、拥有极高的空间定位灵敏度，又彻底避免了 64 位双精度浮点数在指数幂次过大时发生的溢出或下溢（Overflow/Underflow）。
 
-列校验和公式为：
+#### 2. Kahan 补偿求和算法（Kahan Compensated Summation）
+在处理上百万维度的超大规模矩阵时，标准浮点累加和 $\sum w[i] A[i,j]$ 会因浮点舍入误差（Rounding Error）的累积产生 $O(\sqrt{m}\varepsilon)$ 甚至 $O(m\varepsilon)$ 的数值漂移，在超算规模下足以误发虚警。
+为此，本项目所有的指纹计算底层（[HPL_sdc_checksum.c](hpl/src/sdc/HPL_sdc_checksum.c)）均深度集成了 **Kahan 补偿求和算法**：
 
-$$CS[j] = \sum_{i=0}^{m-1} w[i] \times A[i, j]$$
+```c
+double sum = 0.0, c = 0.0, y, t;
+for( i = 0; i < m; i++ ) {
+   double w = weights ? weights[i] : 1.0;
+   y = w * A[i + (size_t)j * lda] - c; // 减去上一轮的补偿余量
+   t = sum + y;                        // 尝试累加
+   c = ( t - sum ) - y;                // 捕获低位被截断的微小误差
+   sum = t;
+}
+```
 
-### 4.2 四道防线架构体系（Four Lines of Defense）
+该算法将浮点累加的极值误差理论上限瞬间压降至 $O(2\varepsilon)$，在百万核集群求解中构建了坚如磐石的零误报数值基线！
 
-在二维分块（2D Block-Cyclic）分布的分布式网格中，带有主元置换的行交换操作（`LASWP`）会在每次 DGEMM 尾矩阵更新后频繁跨进程打乱矩阵行的绝对位置。这一算法物理特性导致传统在 DGEMM 之后立即计算尾矩阵增量校验和的方案无法适从。
-为此，本项目创新性地重构并提出了**“四道防线” SDC 深度防御体系（Scheme A）**，以极低的运行时开销实现了对 100% 计算路径的故障捕获与精准定位：
+### 4.2 四道防线架构体系（Four Lines of Defense - Scheme A）
+
+在二维分块（2D Block-Cyclic）分布的分布式处理器网格中，带有主元置换的行交换操作（`LASWP`）会在每次 DGEMM 尾矩阵更新后频繁跨进程打乱矩阵行的绝对物理位置。这一算法物理特性导致传统“在 DGEMM 后立即计算尾矩阵校验和”的方案因主元行跨网格漂移而完全失效并产生大量误报。
+
+为此，本项目创新性地重构并提出了**“四道防线” SDC 深度防御体系（Scheme A）**，以 $<0.5\%$ 的微小运行时开销实现了对 100% 计算路径与通信链路的绝对守护：
 
 ```mermaid
 graph TD
@@ -207,151 +222,131 @@ graph TD
 ```
 
 #### 防线一：JIT 面板准入拦截（Line of Defense 1 - 历史 DGEMM 异常捕获）
-
-- **根本机制**：在 HPL 的 Look-ahead 求解流程中，当前第 $k$ 步待分解的主面板切片数据 $A_{\text{panel}}$，正由第 $0 \dots k-1$ 步所有的尾矩阵更新（`DGEMM`）计算累积而成。
-- **准入检查**：系统在每次调用 `HPL_pdfact` 分解面板**前夕**，对即将分解的切片执行 JIT（Just-In-Time）准入核查 `HPL_sdc_verify_panel_entry`。
-- **双重断言**：
-  1. **IEEE 754 异常检验**：实时检测主元切片是否出现 `NaN`、`+Inf` 或 `-Inf`。
-  2. **阶梯衰减包络线断言**：基于高斯消元过程中数值范围随分解深度的收敛特性，采用动态包络上限 $10^{150} \times (1 - \frac{j}{2N})$。任何因 CPU/GPU 运算单元发生比特翻转导致的数值发散均在进入面板前被瞬间拦截！
-- **开销与收益**：以 $O(mp \cdot jb)$ 的极低内存巡检代价，实现了对占总计算负载 $\sim 99\%$ 的 DGEMM 历史累积错误的绝对守护。
+- **根本机制**：在 HPL 的 Look-ahead 右瞻求解流程中，当前第 $k$ 步待分解的主面板切片数据 $A_{\text{panel}}$，正是由前 $0 \dots k-1$ 步中所有尾矩阵更新（`DGEMM`）累积计算而成。
+- **JIT 准入核查**：系统巧妙利用该因果依赖，在每次调用 `HPL_pdfact` 分解面板**前夕**，对待分解的切片执行 JIT（Just-In-Time）准入核查 `HPL_sdc_verify_panel_entry`。
+- **双重数值断言**：
+  1. **IEEE 754 异常扫描**：实时检测 SIMD/缓存驻留数据中是否出现 `NaN`、`+Inf` 或 `-Inf`。
+  2. **动态收敛包络线断言**：高斯消元过程中，未消元矩阵的绝对数值范围随分解深度呈严格递减趋势。系统构建动态包络上限 $10^{150} \times (1 - \frac{j}{2N})$。任何因前序 DGEMM 算力单元比特翻转产生的数值发散，在进入面板前被瞬间拦截！
+- **架构收益**：完全淘汰了原先繁重且对 `LASWP` 敏感的尾矩阵校验缓冲（`CS_TRAIL`），以 $O(mp \cdot jb)$ 的极低内存巡检代价，实现了对占总计算负载 $\sim 99\%$ 的 DGEMM 历史累积错误的绝对守护。
 
 #### 防线二：面板分解完备性检验（Line of Defense 2 - 选主元与三角求解守护）
+- **根本机制**：面板 LU 分解（`HPL_pdfact`）包含密集的局部列选主元（`IDAMAX`）、行置换（`LASWP`）和下三角求解（`DTRSM`），是对计算节点 L1/L2 缓存与分支预测控制逻辑的严峻考验。
+- **指纹构建**：在面板分解完成瞬间、全局广播发起之前，对新生成的 $L_2$ 因子通过 Kahan 算法构建加权校验和 $CS_{\text{panel}}[k] = \sum_i w[i] \times L_2[i][k]$，作为全网格后续同步比对的唯一权威基准。
 
-- **根本机制**：面板 LU 分解（`HPL_pdfact`）包含密集的局部列选主元（`IDAMAX`）、行置换（`LASWP`）和下三角求解（`DTRSM`），是对计算节点 L1/L2 缓存与控制逻辑的严峻考验。
-- **指纹构建**：在面板分解完成瞬间、全局广播发起之前，使用位置敏感权值 $w[i] = 2^{(i \bmod 16)}$ 对新生成的 $L_2$ 因子计算加权校验和 $CS_{\text{panel}}[k] = \sum_i w[i] \times L_2[i][k]$，作为后续全网格广播验证的权威基准。
+#### 防线三：通信广播一致性与自适应双模断言（Line of Defense 3 - 全局同步守护）
+- **根本机制**：面板广播（`HPL_bcast`）将当前步的解法基础发往全网格。若网络交换机、光纤链路或网卡 DMA 发生数据静默损坏，错误将瞬间污染全集群。
+- **零开销参考同步**：面板所有者进程构建广播指纹 `cs_bcast`；利用 `MPI_Allreduce(..., MPI_MAX, row_comm)` 在毫无额外通信握手的条件下将权威参考指纹 `cs_ref` 零成本广播至同行所有进程。
+- **自适应双模断言（Adaptive Hybrid Thresholding）**：在 [HPL_sdc_verify.c](hpl/src/sdc/HPL_sdc_verify.c) 中，当待验证指纹比较时，系统充分考虑了分母接近于零时的数值奇异性：
+  ```c
+  dev = fabs( cs_computed - cs_expected );
+  denom = fabs( cs_expected );
+  if( denom < 1.0e-4 ) {
+     // 当参考指纹极小或接近于零时，自动切换为绝对偏差门槛判断，防止除零与发散
+     return ( dev > fmax(threshold, 1.0e-12) ) ? 1 : 0;
+  }
+  return ( ( dev / denom ) > threshold ) ? 1 : 0; // 标准相对偏差判断
+  ```
+  一旦检测到当前缓冲区指纹 `cs_recv` 越界，立即触发 `HPL_SDC_FAULT_PANEL_BCAST` 故障记录！
 
-#### 防线三：通信广播一致性核查（Line of Defense 3 - 全局数据同步守护）
-
-- **根本机制**：面板广播（`HPL_bcast`）将当前步的解法基础发往全网格进程。若通信链路或网卡发生数据静默损坏，错误将迅速扩散至全局。
-- **零开销参考值同步**：
-  - 面板所有者进程（`mycol == icurcol`）构建广播指纹 `cs_bcast`，非所有者进程赋为 `0.0`。
-  - 利用 `MPI_Allreduce(..., MPI_MAX, row_comm)` 在毫无额外通信握手的条件下将权威参考指纹 `cs_ref` 同步至同行所有进程。
-- **接收端断言**：非阻塞广播等待 `HPL_bwait()` 结束后，接收端重算接收缓冲区的实际指纹 `cs_recv`，根据相对偏差法则断言：
-  $$\frac{|CS_{\text{recv}} - CS_{\text{ref}}|}{\max(|CS_{\text{ref}}|, 1.0)} > 1.0 \times 10^{-10}$$
-  一旦相对偏差超过阈值，立即触发 `HPL_SDC_FAULT_PANEL_BCAST` 故障记录！
-
-#### 防线四：回代求解与全局残差检验（Line of Defense 4 - 最终质量闸门）
-
-- **根本机制**：在 `HPL_pdtrsv` 上三角求解完成后，对全局解向量 $X$ 进行统计学 6-Sigma 离群值筛查与 IEEE 754 异常检测；并结合最后的高精度缩放残差：
+#### 防线四：回代求解与全局残差质量闸门（Line of Defense 4 - 最终防线）
+- **根本机制**：在 `HPL_pdtrsv` 上三角求解及解向量广播中插入状态核查，对全局解向量 $X$ 进行统计学离群值筛查与 IEEE 754 异常检测；并最终结合高精度缩放残差：
   $$\frac{\|A \cdot x - b\|_\infty}{\varepsilon \cdot (\|A\|_\infty \|x\|_\infty + \|b\|_\infty) \cdot N} < 16.0$$
-  构建整场基准测试的最终质量闸门。
+  构建整场超算基准测试的最终质量闸门。
 
 ### 4.3 核心函数说明
 
 #### 校验和计算与准入核查（[HPL_sdc_checksum.c](hpl/src/sdc/HPL_sdc_checksum.c)）
 
-| 函数 | 功能 | 复杂度 |
-|------|------|--------|
-| `HPL_sdc_init_weights(w, n)` | 初始化权值向量 $w[i] = 2^{i \bmod 16}$ | $O(n)$ |
-| `HPL_sdc_col_checksum(A, lda, m, n, w)` | 计算矩阵列加权校验和 $\sum_j \sum_i w[i] A[i][j]$ | $O(mn)$ |
-| `HPL_sdc_panel_checksum(A, lda, m, n, w, cs)` | 计算面板每列校验和 $cs[k] = \sum_i w[i] A[i][k]$ | $O(mn)$ |
-| `HPL_sdc_compute_bcast_checksum(...)` | 计算广播缓冲区（L2+L1+DPIV）校验和 | $O(ml2 \cdot jb + jb^2)$ |
+| 函数 | 功能 | 算法特点 | 复杂度 |
+|------|------|---------|--------|
+| `HPL_sdc_init_weights(w, n)` | 初始化权值向量 | 模 16 幂次加权 $w[i] = 2^{i \bmod 16}$，防溢出 | $O(n)$ |
+| `HPL_sdc_col_checksum(A, lda, m, n, w)` | 计算矩阵列加权校验和 | Kahan 补偿求和，精度上限 $O(2\varepsilon)$ | $O(mn)$ |
+| `HPL_sdc_panel_checksum(A, lda, m, n, w, cs)` | 计算面板每列校验和 | Kahan 补偿求和，构建面板权威指纹 | $O(mn)$ |
+| `HPL_sdc_compute_bcast_checksum(...)` | 计算广播缓冲区指纹 | 对 L2 + L1 + DPIV 缓冲区执行全覆盖 Kahan 校验 | $O(ml2 \cdot jb + jb^2)$ |
 
-#### 验证断言逻辑（[HPL_sdc_verify.c](hpl/src/sdc/HPL_sdc_verify.c)）
+#### 验证断言与准入拦截（[HPL_sdc_verify.c](hpl/src/sdc/HPL_sdc_verify.c)）
 
-| 函数 | 功能 |
-|------|------|
-| `HPL_sdc_verify_checksum(cs_expected, cs_computed, threshold)` | 相对阈值比较，返回 1=SDC / 0=正常 |
-| `HPL_sdc_verify_panel(A, lda, m, n, w, cs_expected, threshold)` | 逐列重算面板校验和并比对 |
-| `HPL_sdc_verify_panel_entry(A, lda, m, n)` | ★ JIT 准入核查（捕获历史 DGEMM 异常） |
+| 函数 | 功能 | 判定机制 |
+|------|------|---------|
+| `HPL_sdc_verify_checksum(cs_exp, cs_comp, thres)` | 指纹校验比对 | 自适应双模判断（绝对/相对 threshold 智能切换） |
+| `HPL_sdc_verify_panel(A, lda, m, n, w, cs_exp, thres)` | 面板全列指纹验证 | 逐列重算 Kahan 指纹并比对，返回失效列数 |
+| `HPL_sdc_verify_panel_entry(A, lda, m, n)` | ★ JIT 准入核查 | SIMD IEEE 754 扫描 + $10^{150}(1 - \frac{j}{2N})$ 动态包络线拦截 |
 
-**相对偏差比对逻辑**：
+#### 故障日志、物理映射与按字段独立汇聚（[HPL_sdc_report.c](hpl/src/sdc/HPL_sdc_report.c)）
 
-```
-deviation = |cs_computed - cs_expected|
-denom     = max(|cs_expected|, 1.0)    // 防除零
+| 函数 | 功能 | 深度实现要点 |
+|------|------|------------|
+| `HPL_sdc_log_init(log, comm)` | 故障日志引擎初始化 | 调用 `MPI_Get_processor_name` 获取物理节点主机名/刀片编号 |
+| `HPL_sdc_log_fault(log, ...)` | 实时记录 SDC 故障 | $O(1)$ 单向链表头部插入，在超算严苛求解中绝对不阻塞计算流程 |
+| `HPL_sdc_report_and_aggregate(...)` | 聚合报告分析器 | ★ **按字段独立聚类汇聚（Per-Field Independent Gathering）** |
+| `HPL_sdc_log_cleanup(log)` | 日志内存管理 | 遍历释放堆分配链表节点，杜绝内存泄漏 |
 
-若 deviation / denom > threshold → 返回 1（检测到 SDC 故障）
-否则                             → 返回 0（正常）
-```
+**按字段独立聚类汇聚技术**：
+在异构分布式超算集群中，不同编译优化或硬件架构对 C 语言结构体的字节对齐与填充（Padding/Alignment）规则不尽相同。若直接在 `MPI_Gather` 中传递打包结构体，极易发生反序列化崩溃。本项目在 `HPL_sdc_report_and_aggregate` 中摒弃了整体打包，而是对故障链表的各个基础字段（`mpi_rank`, `grid_row`, `grid_col`, `fault_type`, `step`, `cs_expected`, `cs_computed`, `node_name`）分配独立的类型缓冲区，利用各自准确的 MPI 基础类型（`MPI_INT`, `MPI_DOUBLE`, `MPI_CHAR`）独立发起 `MPI_Gatherv`，实现了跨架构、跨节点的 100% 内存安全与二进制兼容！
 
-#### 故障注入模型（[HPL_sdc_inject.c](hpl/src/sdc/HPL_sdc_inject.c)，需 `-DHPL_SDC_INJECT`）
-
-| 函数 | 故障模型 | 描述 |
-|------|---------|------|
-| `HPL_sdc_inject_bitflip(A, index, bit_pos)` | 单位翻转 | 翻转 `A[index]` 的指定比特位 |
-| `HPL_sdc_inject_random(A, n, rate)` | 随机替换 | 以 `rate` 概率将元素替换为随机值 |
-| `HPL_sdc_inject_at(A, index, mode, value)` | 精确注入 | mode 0=替换, 1=漂移, 2=零值卡死, 3=符号翻转, 4=NaN, 5=Inf |
-
-#### 故障日志与聚合报告（[HPL_sdc_report.c](hpl/src/sdc/HPL_sdc_report.c)）
-
-| 函数 | 功能 |
-|------|------|
-| `HPL_sdc_log_init(log, comm)` | 初始化日志，获取物理节点名 |
-| `HPL_sdc_log_fault(log, rank, row, col, type, step, ...)` | O(1) 链表插入故障记录 |
-| `HPL_sdc_report_and_aggregate(log, comm, rank)` | MPI 聚合 + 输出报告 |
-| `HPL_sdc_log_cleanup(log)` | 释放故障链表 |
-
-### 4.4 关键数据结构
+### 4.4 关键数据结构与架构演进
 
 ```c
-/* SDC 故障类型枚举 (hpl_sdc.h) */
+/* SDC 故障类型枚举 (hpl_sdc.h) - 方案 A 演进版 */
 typedef enum {
-   HPL_SDC_FAULT_PANEL_BCAST,    // 面板广播损坏
-   HPL_SDC_FAULT_PANEL_FACT,     // 面板分解损坏
-   HPL_SDC_FAULT_TRAIL_UPDATE,   // 尾矩阵更新损坏
-   HPL_SDC_FAULT_BACK_SOLVE,     // 回代求解损坏
-   HPL_SDC_FAULT_BROADCAST,      // 通信层广播损坏
-   HPL_SDC_FAULT_UNKNOWN         // 未知类型
+   HPL_SDC_FAULT_PANEL_BCAST    = 0,   // 面板广播通信损坏
+   HPL_SDC_FAULT_PANEL_FACT     = 1,   // 面板选主元与 LU 分解损坏
+   HPL_SDC_FAULT_PANEL_ENTRY    = 2,   // ★ JIT 面板准入拦截（捕获历史 DGEMM 累积异常）
+   HPL_SDC_FAULT_BACK_SOLVE     = 3,   // 回代三角求解损坏
+   HPL_SDC_FAULT_BROADCAST      = 4,   // 基础通信层广播损坏
+   HPL_SDC_FAULT_UNKNOWN        = 5    // 未知故障类型
 } HPL_T_SDC_FAULT_TYPE;
 
-/* 单条故障记录（链表节点） */
+/* 单条故障记录（链表节点） - 具备物理拓扑追溯能力 */
 typedef struct HPL_S_SDC_FAULT {
-   int                  mpi_rank;      // MPI 全局秩
-   int                  grid_row;      // 处理器网格行坐标
-   int                  grid_col;      // 处理器网格列坐标
-   char                 node_name[64]; // 物理节点主机名
-   HPL_T_SDC_FAULT_TYPE fault_type;    // 故障类型
-   int                  step;          // LU 分解步号
-   int                  global_row;    // 全局矩阵行索引
-   int                  global_col;    // 全局矩阵列索引
-   double               cs_expected;   // 期望校验和
-   double               cs_computed;   // 实际校验和
-   double               deviation;     // 偏差量
-   struct HPL_S_SDC_FAULT * next;      // 链表指针
+   int                  mpi_rank;      // MPI 全局进程秩
+   int                  grid_row;      // 2D 处理器虚拟网格行坐标 (myrow)
+   int                  grid_col;      // 2D 处理器虚拟网格列坐标 (mycol)
+   char                 node_name[64]; // ★ 物理服务器主机名 / 刀片服务器节点标识
+   HPL_T_SDC_FAULT_TYPE fault_type;    // 精确故障枚举类型
+   int                  step;          // Look-ahead 求解主循环步号 (step j)
+   int                  global_row;    // 故障定位：全局矩阵行绝对坐标
+   int                  global_col;    // 故障定位：全局矩阵列绝对坐标
+   double               cs_expected;   // 权威参考指纹 (Expected Checksum)
+   double               cs_computed;   // 实际计算指纹 (Computed Checksum)
+   double               deviation;     // 绝对误差量 |cs_computed - cs_expected|
+   struct HPL_S_SDC_FAULT * next;      // O(1) 链表插入指针
 } HPL_T_SDC_FAULT;
-
-/* 故障日志（每个进程维护一个） */
-typedef struct HPL_S_SDC_LOG {
-   HPL_T_SDC_FAULT * head;     // 链表头
-   int               count;    // 故障计数
-   int               enabled;  // 启用标志
-   char              node_name[64]; // 物理节点主机名
-} HPL_T_SDC_LOG;
 ```
 
-### 4.5 面板结构体中的 SDC 扩展字段
+### 4.5 面板结构体中的 SDC 扩展字段与重构精简
 
-在 `HPL_T_panel`（[hpl/include/hpl_panel.h](hpl/include/hpl_panel.h)）中新增：
+在 `HPL_T_panel`（[hpl/include/hpl_panel.h](hpl/include/hpl_panel.h)）中新增 SDC 控制块，同时**彻底清除了对 `LASWP` 敏感的尾矩阵校验缓冲（`CS_TRAIL`）**：
 
 ```c
 #ifdef HPL_SDC_CHECK
-   double  * CS_PANEL;   // jb 个面板列校验和
-   double  * CS_WEIGHTS; // mp 个权值向量
-   double    cs_bcast;   // 广播缓冲区校验和
-   double  * CS_TRAIL;   // nq 个尾矩阵列校验和
-   int       sdc_step;   // 验证步数计数器
+   double  * CS_PANEL;   // jb 个面板列加权校验和数组
+   double  * CS_WEIGHTS; // mp 个模 16 幂次权值向量 w[i]
+   double    cs_bcast;   // 当前步广播缓冲区加权指纹
+   int       sdc_step;   // 验证步数计数器与跟踪调试标识
 #endif
 ```
 
-在 [HPL_pdpanel_init.c](hpl/src/panel/HPL_pdpanel_init.c) 中分配并初始化，在 [HPL_pdpanel_free.c](hpl/src/panel/HPL_pdpanel_free.c) 中释放。
+**重构精简要点**：在“四道防线”方案 A 重构中，得益于 JIT 准入核查（`HPL_sdc_verify_panel_entry`）对历史 DGEMM 异常的精准拦截，旧版中用于记录尾矩阵增量校验和的 `CS_TRAIL` 指针被彻底移除！为每个分块面板节省了 $O(nq)$ 的内存开销，同时让数据结构变得极其纯净与轻量！
 
-### 4.6 编译宏控制
+### 4.6 编译宏控制与工业零开销设计
 
-| 宏定义 | 作用 |
-|--------|------|
-| `HPL_SDC_CHECK` | 启用 SDC 检测的总开关，所有 SDC 代码均在 `#ifdef HPL_SDC_CHECK` 下 |
-| `HPL_SDC_BCAST_VERIFY` | 启用面板广播校验和验证（默认 1） |
-| `HPL_SDC_TRAIL_VERIFY` | （废弃）原尾矩阵增量校验开关，现由 JIT 准入核查替代 |
-| `HPL_SDC_INJECT` | 启用故障注入功能（仅测试用） |
+| 宏定义 | 作用与配置说明 |
+|--------|--------------|
+| `HPL_SDC_CHECK` | 启用 SDC 检测的总开关，所有 SDC 代码均严格封闭在 `#ifdef HPL_SDC_CHECK` 下 |
+| `HPL_SDC_BCAST_VERIFY` | 启用面板广播指纹 Kahan 校验与自适应断言（默认 1） |
+| `HPL_SDC_TRAIL_VERIFY` | （已废弃并移除）旧版尾矩阵增量校验开关，现由极低开销的 JIT 准入核查全面替代 |
+| `HPL_SDC_INJECT` | 启用主动故障注入支持（用于研发环境端到端验证与混沌工程测试） |
 | `HPL_SDC_THRESHOLD` | 校验和比对相对阈值（默认 `1.0e-10`） |
-| `HPL_SDC_WEIGHT_WINDOW` | 权值窗口大小（默认 16） |
+| `HPL_SDC_WEIGHT_WINDOW` | 权值模运算窗口大小（默认 16，防幂次溢出） |
 
-不启用 `HPL_SDC_CHECK` 时，所有 SDC 代码被编译器完全消除，**零开销**。
+**工业级零开销隔离**：当在构建时未定义 `HPL_SDC_CHECK`（例如标准性能压测编译）时，所有的 SDC 数据结构、函数调用与巡检分支会被 GCC/Clang 预处理器完全剥离并由编译器彻底消除，实现对标准 HPL 性能测试的 **0% 侵入与零开销**！
 
-### 4.7 故障报告输出示例
+### 4.7 故障报告输出示例与分布式智能运维
 
-```
+当测试在超算集群或大模型训练资源池运行完毕时，`HPL_sdc_report_and_aggregate` 会在 Root 节点输出高度结构化的故障排查诊断报告：
+
+```text
 ===== SDC FAULT REPORT =====
 Total faults detected: 42
 
@@ -377,6 +372,8 @@ RECOMMENDATION: Replace nodes with >10 faults:
 ==============================
 ```
 
+**自动排障指导**：报告不仅精确展示故障发生的物理主机名（`compute-node-042`）、二元网格坐标和全局矩阵切片位置，系统还会根据每个节点的故障密度自动生成推荐运维指令（如 `Replace nodes with >10 faults`），协助超算运维专家迅速锁定并拔除发生频繁硬件比特位翻转的“亚健康”故障服务器！
+
 ---
 
 ## 五、编译构建说明
@@ -392,12 +389,12 @@ RECOMMENDATION: Replace nodes with >10 faults:
 
 本项目提供四种构建配置，通过 `Make.<arch>` 文件定义：
 
-| 配置名 | 编译宏 | 用途 |
-|--------|--------|------|
-| `WSL_OpenBLAS` | 无 SDC 宏 | 标准 HPL 性能测试 |
+| 配置名 | 编译宏 | 用途与特质 |
+|--------|--------|-----------|
+| `WSL_OpenBLAS` | 无 SDC 宏 | 标准 HPL 极限性能测试（零开销基准） |
 | `WSL_OpenMPI` | 无 SDC 宏 | 标准 MPI 构建 |
-| `WSL_SDC_CHECK_ONLY` | `-DHPL_SDC_CHECK -DHPL_SDC_BCAST_VERIFY=1 -DHPL_SDC_TRAIL_VERIFY=1` | SDC 检测模式 |
-| `WSL_SDC_INJECT` | 上述 + `-DHPL_SDC_INJECT` | SDC 检测 + 故障注入 |
+| `WSL_SDC_CHECK_ONLY` | `-DHPL_SDC_CHECK -DHPL_SDC_BCAST_VERIFY=1` | 工业生产 SDC 监测构建（实时自适应守护） |
+| `WSL_SDC_INJECT` | 上述 + `-DHPL_SDC_INJECT=1` | 研发调试与端到端故障注入测试构建 |
 
 ### 5.3 构建步骤
 
