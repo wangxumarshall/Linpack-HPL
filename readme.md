@@ -170,13 +170,7 @@ main (HPL_pddriver.c)
 
 ## 四、SDC 检测增强模块
 
-### 4.1 核心设计思想：基于 Kahan 补偿同构指纹与 JIT 准入防线的 ABFT
-
-在高并发、大模型训练集群及百亿亿次（Exascale）超算环境中，高频缓存压降、高能宇宙射线撞击或微处理器老损极易引发寄存器与内存的比特翻转（Bit Flip）。传统 HPL 仅在几小时乃至数天全流程求解结束后通过残差 $\|Ax-b\|_\infty$ 检验正确性，若发生静默数据损坏（SDC），根本无法定位出错时间、求解阶段与物理节点。
-
-本项目实现了工业级 **ABFT（Algorithm-Based Fault Tolerance，算法级容错）** 体系，针对二维分块循环映射下主元行置换（`LASWP`）对物理网格绝对对齐的破坏，彻底摒弃了繁杂且易引发误报的历史加权计算与尾矩阵校验，重构了极致轻量、纯净且精准的零漂移实时监测体系。
-
-#### 1. 纯无加权 Kahan 补偿求和（Pure Unweighted Kahan Compensated Summation）
+### 4.1 Kahan补偿求和
 在处理上百万维度的超大规模矩阵时，标准浮点累加和 $\sum A[i]$ 会因浮点舍入误差（Rounding Error）的累积产生 $O(\sqrt{m}\varepsilon)$ 甚至 $O(m\varepsilon)$ 的数值漂移，在超算规模下足以误发虚警。
 为此，本项目所有的指纹计算底层（[HPL_sdc_checksum.c](hpl/src/sdc/HPL_sdc_checksum.c)）均深度集成了 **Kahan 补偿求和算法**：
 
@@ -190,13 +184,6 @@ for( i = 0; i < m; i++ ) {
 }
 ```
 
-该算法将浮点累加的极值误差理论上限瞬间压降至 $O(2\varepsilon)$！同时，由于面板通信广播（`HPL_bcast`）在同行各进程接收到的数据切片完全同构，去除历史遗留的模 16 幂次加权不仅大幅节省了计算指令开销，消除了权值向量访存，更构建了坚如磐石、完全零漂移的同构指纹基准！
-
-#### 2. 为什么要废弃模 16 幂次加权与面板列校验？
-在早期的 SDC 探索中，常引入 $w[i] = 2^{(i \bmod 16)}$ 加权以防范同一列内正负复合比特翻转。然而在深度工程实践与规模化验证中我们发现：
-1. **DGEMM 历史累积错误已有更优解**：对主计算负载（占 $99\%$ 算力）的异常监控，由于 `LASWP` 频繁跨节点打乱行位置，任何依赖静态空间权值的列校验或尾矩阵跟踪（`CS_TRAIL` / `CS_PANEL`）均会因主元物理漂移而陷入复杂的索引重映射，甚至产生误报。
-2. **JIT 准入捕获机制降维打击**：系统采用前向因果准入拦截（`HPL_sdc_verify_panel_entry`），在面板消元前夕直接检测 SIMD/缓存发散与 IEEE 754 异常。该防线以零通信、零权值开销完成了对历史 DGEMM 累积位翻转的绝对拦截。
-3. **通信广播校验只需同构比对**：在面板广播阶段，所有同行进程对同一片通信缓冲区（`L2 + L1 + DPIV`）进行完整性核验。由于全员对同一段物理内存进行无加权 Kahan 求和，任何网卡 DMA 损坏或网络传输位翻转都会导致指纹瞬间偏离，无加权 Kahan 指纹具备最高的执行效率与极致的数值稳定性。
 
 ### 4.2 四道防线架构体系（Four Lines of Defense - Scheme A）
 
@@ -204,17 +191,28 @@ for( i = 0; i < m; i++ ) {
 
 ```mermaid
 graph TD
-    A["HPL_pdgesvK2 主循环步 j = 0...N"] --> B["防线一: JIT 面板准入拦截 HPL_sdc_verify_panel_entry"]
-    B -->|发现 NaN/Inf/异常发散| E1["记录 HPL_SDC_FAULT_PANEL_ENTRY 捕获历史 DGEMM 异常"]
-    B -->|准入验证通过| C["防线二: 面板 LU 分解 HPL_pdfact"]
-    C --> D["计算所有者列广播指纹 cs_bcast 与 MPI_Allreduce MAX 同步参考值"]
-    D --> E["防线三: 面板全局广播 HPL_bcast 与接收后指纹验证 HPL_sdc_verify_checksum"]
-    E -->|偏差 dev 大于 1e-10| E2["记录 HPL_SDC_FAULT_PANEL_BCAST 捕获通信或缓存 SDC"]
-    E -->|广播验证通过| F["执行主计算负载: HPL_pdupdate 尾矩阵 DGEMM 更新"]
-    F -->|完成当前步| A
-    A -->|全部分解完毕| G["防线四: 回代求解 HPL_pdtrsv 与解向量检查"]
-    G --> H["计算全局缩放残差 Ax-b 无穷范数极值验算"]
-    H --> I["全流程结束: HPL_sdc_report_and_aggregate 聚合故障拓扑报告"]
+    subgraph "防线 1: JIT 面板准入防线 (Cache-Resident Panel Entry Check)"
+        A["历史步 DGEMM 尾矩阵更新完成"] --> B["当前步 Step k: 前 jb=192 列进入面板 panel k"]
+        B -->|加载入 L2/L3 Cache 准备分解| C["执行 HPL_sdc_verify_panel_entry (扫描 Cache 检查 NaN/Inf 及奇点损坏)"]
+        C -->|捕获历史 DGEMM 累积的 SDC!| D["输出 PANEL_ENTRY 故障日志"]
+    end
+
+    subgraph "防线 2: 面板分解 ABFT 防线 (Panel Factorization Check)"
+        C --> E["调用 HPL_pdfact 执行 LU 分解"]
+        E --> F["计算 CS_PANEL 指纹"]
+        F -->|校验分解算子正确性| G["捕获 PANEL_FACT 故障"]
+    end
+
+    subgraph "防线 3: 广播缓冲区防线 (Broadcast Buffer Check)"
+        E --> H["MPI_Bcast 广播面板至接收进程"]
+        H -->|接收端加载入 Cache| I["比对 cs_bcast 与接收缓冲区指纹"]
+        I -->|捕获 MPI 网络/总线/拷存损坏| J["输出 PANEL_BCAST 故障"]
+    end
+
+    subgraph "防线 4: 全局终态兜底 (Global Residual Gate)"
+        H --> K["回代求解 X 与终态残差 ||Ax - b||"]
+        K -->|标准 HPL 精度门槛| L["终态正确性绝对闭环"]
+    end
 ```
 
 #### 防线一：JIT 面板准入拦截（Line of Defense 1 - 历史 DGEMM 异常捕获）
