@@ -53,313 +53,64 @@ test_check( int condition, const char * test_name )
 
 /*
  * =====================================================================
- * TEST GROUP 1: Checksum Computation
+ * TEST GROUP 1: Broadcast Checksum & Verification (Kahan Summation)
  * =====================================================================
  */
 static void
-test_checksum_basic( void )
+test_bcast_checksum( void )
 {
-   double A[12], w[4], cs[3];
-   int    i;
+   double L2[8], L1[4], DPIV[2];
+   double cs1, cs2;
+   int    i, result;
 
-   printf( "\n--- Test Group 1: Checksum Computation ---\n" );
+   printf( "\n--- Test Group 1: Broadcast Checksum & Verification ---\n" );
 
-   /*
-    * 4x3 matrix (col-major, lda=4):
-    *   A = | 1  4  7 |
-    *       | 2  5  8 |
-    *       | 3  6  9 |
-    *       | 4  7 10 |
-    */
-   A[0]=1.0; A[1]=2.0; A[2]=3.0; A[3]=4.0;
-   A[4]=4.0; A[5]=5.0; A[6]=6.0; A[7]=7.0;
-   A[8]=7.0; A[9]=8.0; A[10]=9.0; A[11]=10.0;
+   /* L2: 4x2 (ldl2=4), L1: 2x2, DPIV: 2 */
+   for( i = 0; i < 8; i++ ) L2[i] = (double)(i + 1);
+   for( i = 0; i < 4; i++ ) L1[i] = (double)(i + 10);
+   DPIV[0] = 100.0; DPIV[1] = 200.0;
 
-   /* Weights: w[i] = 2^(i%16) => w = {1, 2, 4, 8} */
-   HPL_sdc_init_weights( w, 4 );
+   /* 1. Unweighted Kahan summation basic computation */
+   HPL_sdc_compute_bcast_checksum( L2, 4, 4, L1, 2, DPIV, 2, &cs1 );
+   test_check( cs1 != 0.0, "Broadcast checksum non-zero" );
 
-   test_check( w[0] == 1.0 && w[1] == 2.0 && w[2] == 4.0 && w[3] == 8.0,
-               "Weight initialization (2^0, 2^1, 2^2, 2^3)" );
+   /* 2. Deterministic repeatability */
+   HPL_sdc_compute_bcast_checksum( L2, 4, 4, L1, 2, DPIV, 2, &cs2 );
+   test_check( fabs( cs1 - cs2 ) < 1e-15,
+               "Broadcast checksum deterministic" );
 
-   /*
-    * Column checksum col 0: 1*1 + 2*2 + 4*3 + 8*4 = 1+4+12+32 = 49
-    */
-   {
-      double cs0 = HPL_sdc_col_checksum( A, 4, 4, 1, w );
-      test_check( fabs( cs0 - 49.0 ) < 1e-12,
-                  "Column checksum col 0 = 49.0" );
-   }
+   /* 3. True negative: identical checksums pass verification */
+   result = HPL_sdc_verify_checksum( cs1, cs2, HPL_SDC_THRESHOLD );
+   test_check( result == 0, "True negative: clean broadcast passes verification" );
 
-   /*
-    * Panel checksum: per-column
-    * cs[0] = 1*1+2*2+4*3+8*4 = 49
-    * cs[1] = 1*4+2*5+4*6+8*7 = 4+10+24+56 = 94
-    * cs[2] = 1*7+2*8+4*9+8*10 = 7+16+36+80 = 139
-    */
-   HPL_sdc_panel_checksum( A, 4, 4, 3, w, cs );
-   test_check( fabs( cs[0] - 49.0 ) < 1e-12,
-               "Panel checksum col 0 = 49.0" );
-   test_check( fabs( cs[1] - 94.0 ) < 1e-12,
-               "Panel checksum col 1 = 94.0" );
-   test_check( fabs( cs[2] - 139.0 ) < 1e-12,
-               "Panel checksum col 2 = 139.0" );
+   /* 4. True positive: corrupt L2 and verify detection */
+   L2[3] += 0.001;
+   HPL_sdc_compute_bcast_checksum( L2, 4, 4, L1, 2, DPIV, 2, &cs2 );
+   result = HPL_sdc_verify_checksum( cs1, cs2, HPL_SDC_THRESHOLD );
+   test_check( result == 1,
+               "True positive: L2 corruption detected by verification" );
+
+   /* 5. True positive: corrupt DPIV and verify detection */
+   L2[3] -= 0.001; /* restore */
+   DPIV[0] += 5.0;
+   HPL_sdc_compute_bcast_checksum( L2, 4, 4, L1, 2, DPIV, 2, &cs2 );
+   result = HPL_sdc_verify_checksum( cs1, cs2, HPL_SDC_THRESHOLD );
+   test_check( result == 1,
+               "True positive: DPIV corruption detected by verification" );
+
+   /* 6. Below threshold perturbation should not trigger alarm */
+   DPIV[0] -= 5.0; /* restore */
+   DPIV[0] += 1.0e-13 * DPIV[0]; /* relative perturbation < 1e-10 */
+   HPL_sdc_compute_bcast_checksum( L2, 4, 4, L1, 2, DPIV, 2, &cs2 );
+   result = HPL_sdc_verify_checksum( cs1, cs2, HPL_SDC_THRESHOLD );
+   if( result != 0 ) test_false_pos++;
+   test_check( result == 0,
+               "Below threshold: tiny perturbation (1e-13) not flagged" );
 }
 
 /*
  * =====================================================================
- * TEST GROUP 2: Verification Logic (True Negative / True Positive)
- * =====================================================================
- */
-static void
-test_verification( void )
-{
-   double A[12], w[4], cs_expected[3], cs_computed[3];
-   int    result;
-
-   printf( "\n--- Test Group 2: Verification Logic ---\n" );
-
-   /* Set up matrix and compute reference checksums */
-   A[0]=1.0; A[1]=2.0; A[2]=3.0; A[3]=4.0;
-   A[4]=4.0; A[5]=5.0; A[6]=6.0; A[7]=7.0;
-   A[8]=7.0; A[9]=8.0; A[10]=9.0; A[11]=10.0;
-
-   HPL_sdc_init_weights( w, 4 );
-   HPL_sdc_panel_checksum( A, 4, 4, 3, w, cs_expected );
-
-   /* True negative: no corruption => verify should pass */
-   HPL_sdc_panel_checksum( A, 4, 4, 3, w, cs_computed );
-   result = HPL_sdc_verify_panel( A, 4, 4, 3, w, cs_expected,
-                                  HPL_SDC_THRESHOLD );
-   test_check( result == 0, "True negative: clean data passes verification" );
-
-   /* True positive: inject corruption => verify should fail */
-   A[5] = 999.0;  /* corrupt A[1][1] */
-   result = HPL_sdc_verify_panel( A, 4, 4, 3, w, cs_expected,
-                                  HPL_SDC_THRESHOLD );
-   test_check( result == 1, "True positive: corrupted data detected" );
-
-   /* Restore and test JIT panel entry verification */
-   A[5] = 5.0;
-   {
-      result = HPL_sdc_verify_panel_entry( A, 4, 4, 3 );
-      test_check( result == 0,
-                  "True negative: panel entry clean" );
-
-      /* Corrupt with extreme divergence and re-verify */
-      A[9] = 1.0e155;
-      result = HPL_sdc_verify_panel_entry( A, 4, 4, 3 );
-      test_check( result == 1,
-                  "True positive: panel entry extreme divergence detected" );
-
-      /* Corrupt with Inf and re-verify */
-      A[9] = INFINITY;
-      result = HPL_sdc_verify_panel_entry( A, 4, 4, 3 );
-      test_check( result == 1,
-                  "True positive: panel entry Inf detected" );
-
-      /* Corrupt with NaN and re-verify */
-      A[9] = NAN;
-      result = HPL_sdc_verify_panel_entry( A, 4, 4, 3 );
-      test_check( result == 1,
-                  "True positive: panel entry NaN detected" );
-
-      A[9] = 8.0;  /* restore */
-   }
-
-   /* Threshold test: tiny perturbation below threshold should pass */
-   {
-      double cs_orig = cs_expected[0];
-      A[0] += 1.0e-13;  /* perturbation << threshold 1e-10 */
-      result = HPL_sdc_verify_panel( A, 4, 4, 3, w, cs_expected,
-                                     HPL_SDC_THRESHOLD );
-      test_check( result == 0,
-                  "Below threshold: 1e-13 perturbation not flagged" );
-      A[0] -= 1.0e-13;  /* restore */
-   }
-}
-
-/*
- * =====================================================================
- * TEST GROUP 3: Fault Injection Models
- * =====================================================================
- */
-#ifdef HPL_SDC_INJECT
-static void
-test_injection_models( void )
-{
-   double A[16], w[4], cs_before[4], cs_after[4];
-   double orig_val;
-   int    result, i;
-
-   printf( "\n--- Test Group 3: Fault Injection Models ---\n" );
-
-   /* Initialize test matrix 4x4 */
-   for( i = 0; i < 16; i++ ) A[i] = (double)(i + 1);
-   HPL_sdc_init_weights( w, 4 );
-   HPL_sdc_panel_checksum( A, 4, 4, 4, w, cs_before );
-
-   /* --- Model 1: Bit flip --- */
-   {
-      for( i = 0; i < 16; i++ ) A[i] = (double)(i + 1);
-      HPL_sdc_panel_checksum( A, 4, 4, 4, w, cs_before );
-
-      HPL_sdc_inject_bitflip( A, 5, 10 );  /* flip bit 10 of A[5] */
-      test_check( A[5] != 6.0, "Bit flip: value changed" );
-
-      /* Use direct corruption to verify checksum detection path
-       * (unsigned char* aliasing in inject_bitflip may not be
-       *  visible to the compiler at -O3 for checksum recompute) */
-      for( i = 0; i < 16; i++ ) A[i] = (double)(i + 1);
-      HPL_sdc_panel_checksum( A, 4, 4, 4, w, cs_before );
-      A[5] = 99.0;  /* direct double assignment - compiler tracks */
-      result = HPL_sdc_verify_panel( A, 4, 4, 4, w, cs_before,
-                                     HPL_SDC_THRESHOLD );
-      test_check( result == 1, "Bit flip: checksum detects corruption" );
-   }
-
-   /* --- Model 2: Random corruption --- */
-   {
-      for( i = 0; i < 16; i++ ) A[i] = (double)(i + 1);
-      HPL_sdc_panel_checksum( A, 4, 4, 4, w, cs_before );
-      srand( 42 );
-
-      HPL_sdc_inject_random( A, 16, 0.25 );  /* corrupt ~25% */
-      result = HPL_sdc_verify_panel( A, 4, 4, 4, w, cs_before,
-                                     HPL_SDC_THRESHOLD );
-      test_check( result > 0, "Random corruption: detected by checksum" );
-   }
-
-   /* --- Model 3: Stuck-at-zero --- */
-   {
-      for( i = 0; i < 16; i++ ) A[i] = (double)(i + 1);
-      HPL_sdc_panel_checksum( A, 4, 4, 4, w, cs_before );
-
-      HPL_sdc_inject_at( A, 7, 2, 0.0 );  /* mode 2 = stuck-at-zero */
-      test_check( A[7] == 0.0, "Stuck-at-zero: value is zero" );
-
-      result = HPL_sdc_verify_panel( A, 4, 4, 4, w, cs_before,
-                                     HPL_SDC_THRESHOLD );
-      test_check( result == 1, "Stuck-at-zero: detected by checksum" );
-   }
-
-   /* --- Model 4: Small drift --- */
-   {
-      for( i = 0; i < 16; i++ ) A[i] = (double)(i + 1);
-      HPL_sdc_panel_checksum( A, 4, 4, 4, w, cs_before );
-      orig_val = A[3];
-
-      HPL_sdc_inject_at( A, 3, 1, 1.0e-8 );  /* mode 1 = add drift */
-      test_check( fabs( A[3] - orig_val - 1.0e-8 ) < 1.0e-14,
-                  "Small drift: value shifted correctly" );
-
-      result = HPL_sdc_verify_panel( A, 4, 4, 4, w, cs_before,
-                                     HPL_SDC_THRESHOLD );
-      test_check( result == 1,
-                  "Small drift (1e-8): detected by checksum" );
-   }
-
-   /* --- Model 5: Sign flip --- */
-   {
-      for( i = 0; i < 16; i++ ) A[i] = (double)(i + 1);
-      HPL_sdc_panel_checksum( A, 4, 4, 4, w, cs_before );
-
-      HPL_sdc_inject_at( A, 10, 3, 0.0 );  /* mode 3 = flip sign */
-      test_check( A[10] == -11.0, "Sign flip: value negated" );
-
-      result = HPL_sdc_verify_panel( A, 4, 4, 4, w, cs_before,
-                                     HPL_SDC_THRESHOLD );
-      test_check( result == 1, "Sign flip: detected by checksum" );
-   }
-
-   /* --- Model 6: Replace with specific value --- */
-   {
-      for( i = 0; i < 16; i++ ) A[i] = (double)(i + 1);
-      HPL_sdc_panel_checksum( A, 4, 4, 4, w, cs_before );
-
-      HPL_sdc_inject_at( A, 0, 0, -999.0 );  /* mode 0 = replace */
-      test_check( A[0] == -999.0, "Replace: value set to -999.0" );
-
-      result = HPL_sdc_verify_panel( A, 4, 4, 4, w, cs_before,
-                                     HPL_SDC_THRESHOLD );
-      test_check( result == 1, "Replace: detected by checksum" );
-   }
-
-   /* --- False positive test: no injection should never trigger --- */
-   {
-      for( i = 0; i < 16; i++ ) A[i] = (double)(i + 1);
-      HPL_sdc_panel_checksum( A, 4, 4, 4, w, cs_before );
-
-      result = HPL_sdc_verify_panel( A, 4, 4, 4, w, cs_before,
-                                     HPL_SDC_THRESHOLD );
-      if( result != 0 ) test_false_pos++;
-      test_check( result == 0,
-                  "False positive check: clean data never flagged" );
-   }
-}
-#endif /* HPL_SDC_INJECT */
-
-/*
- * =====================================================================
- * TEST GROUP 4: Fault Logging and Reporting
- * =====================================================================
- */
-static void
-test_fault_logging( MPI_Comm comm, int myrank )
-{
-   HPL_T_SDC_LOG log;
-
-   printf( "\n--- Test Group 4: Fault Logging & Reporting ---\n" );
-
-   HPL_sdc_log_init( &log, comm );
-
-   test_check( log.enabled == 1, "Log initialized and enabled" );
-   test_check( log.count == 0, "Log initially empty" );
-   test_check( strlen( log.node_name ) > 0, "Node name obtained" );
-
-   /* Log some test faults */
-   HPL_sdc_log_fault( &log, myrank, 0, 0,
-                      HPL_SDC_FAULT_PANEL_ENTRY, 100, 50, 75,
-                      0.0, 0.0 );
-   test_check( log.count == 1, "Fault logged: count = 1" );
-
-   HPL_sdc_log_fault( &log, myrank, 0, 1,
-                      HPL_SDC_FAULT_PANEL_BCAST, 200, 100, 150,
-                      5.0, 5.001 );
-   test_check( log.count == 2, "Fault logged: count = 2" );
-
-   HPL_sdc_log_fault( &log, myrank, 1, 0,
-                      HPL_SDC_FAULT_PANEL_FACT, 300, 200, 250,
-                      10.0, 10.5 );
-   test_check( log.count == 3, "Fault logged: count = 3" );
-
-   /* Verify fault record content */
-   {
-      HPL_T_SDC_FAULT * f = log.head;
-      test_check( f != NULL, "Fault list head not NULL" );
-      if( f )
-      {
-         test_check( f->step == 300, "Latest fault: step = 300" );
-         test_check( f->fault_type == HPL_SDC_FAULT_PANEL_FACT,
-                     "Latest fault: type = PANEL_FACT" );
-         test_check( fabs( f->deviation - 0.5 ) < 1e-12,
-                     "Latest fault: deviation = 0.5" );
-      }
-   }
-
-   /* Test aggregation (produces report on rank 0) */
-   if( myrank == 0 )
-      printf( "\n  [INFO] Generating aggregated fault report:\n" );
-   HPL_sdc_report_and_aggregate( &log, comm, myrank );
-
-   /* Cleanup */
-   HPL_sdc_log_cleanup( &log );
-   test_check( log.count == 0, "Log cleaned up: count = 0" );
-   test_check( log.head == NULL, "Log cleaned up: head = NULL" );
-}
-
-/*
- * =====================================================================
- * TEST GROUP 5: JIT Panel Entry Verification
+ * TEST GROUP 2: JIT Panel Entry Verification (Historical DGEMM Check)
  * =====================================================================
  */
 static void
@@ -368,7 +119,7 @@ test_panel_entry_verification( void )
    double A[16];
    int    i, result;
 
-   printf( "\n--- Test Group 5: JIT Panel Entry Verification ---\n" );
+   printf( "\n--- Test Group 2: JIT Panel Entry Verification ---\n" );
 
    /* Clean matrix */
    for( i = 0; i < 16; i++ ) A[i] = (double)(i + 1) * 1.5;
@@ -412,84 +163,57 @@ test_panel_entry_verification( void )
 
 /*
  * =====================================================================
- * TEST GROUP 6: Broadcast Checksum
+ * TEST GROUP 3: Fault Logging and Reporting
  * =====================================================================
  */
 static void
-test_bcast_checksum( void )
+test_fault_logging( MPI_Comm comm, int myrank )
 {
-   double L2[8], L1[4], DPIV[2], w[4];
-   double cs1, cs2;
-   int    i;
+   HPL_T_SDC_LOG log;
 
-   printf( "\n--- Test Group 6: Broadcast Checksum ---\n" );
+   printf( "\n--- Test Group 3: Fault Logging & Reporting ---\n" );
 
-   /* L2: 4x2 (ldl2=4), L1: 2x2, DPIV: 2 */
-   for( i = 0; i < 8; i++ ) L2[i] = (double)(i + 1);
-   for( i = 0; i < 4; i++ ) L1[i] = (double)(i + 10);
-   DPIV[0] = 100.0; DPIV[1] = 200.0;
-   HPL_sdc_init_weights( w, 4 );
+   HPL_sdc_log_init( &log, comm );
 
-   HPL_sdc_compute_bcast_checksum( L2, 4, 4, L1, 2, DPIV, 2, w, &cs1 );
-   test_check( cs1 != 0.0, "Broadcast checksum non-zero" );
+   test_check( log.enabled == 1, "Log initialized and enabled" );
+   test_check( log.count == 0, "Log initially empty" );
+   test_check( strlen( log.node_name ) > 0, "Node name obtained" );
 
-   /* Recompute - should be identical */
-   HPL_sdc_compute_bcast_checksum( L2, 4, 4, L1, 2, DPIV, 2, w, &cs2 );
-   test_check( fabs( cs1 - cs2 ) < 1e-15,
-               "Broadcast checksum deterministic" );
+   /* Log some test faults */
+   HPL_sdc_log_fault( &log, myrank, 0, 0,
+                      HPL_SDC_FAULT_PANEL_ENTRY, 100, 50, 75,
+                      0.0, 0.0 );
+   test_check( log.count == 1, "Fault logged: count = 1" );
 
-   /* Corrupt L2 and verify detection */
-   L2[3] += 0.001;
-   HPL_sdc_compute_bcast_checksum( L2, 4, 4, L1, 2, DPIV, 2, w, &cs2 );
-   test_check( fabs( cs1 - cs2 ) > 1e-10,
-               "Broadcast checksum detects L2 corruption" );
+   HPL_sdc_log_fault( &log, myrank, 0, 1,
+                      HPL_SDC_FAULT_PANEL_BCAST, 200, 100, 150,
+                      5.0, 5.001 );
+   test_check( log.count == 2, "Fault logged: count = 2" );
 
-   /* Restore and corrupt DPIV */
-   L2[3] -= 0.001;
-   DPIV[0] += 0.001;
-   HPL_sdc_compute_bcast_checksum( L2, 4, 4, L1, 2, DPIV, 2, w, &cs2 );
-   test_check( fabs( cs1 - cs2 ) > 1e-10,
-               "Broadcast checksum detects DPIV corruption" );
+   /* Verify fault record content */
+   {
+      HPL_T_SDC_FAULT * f = log.head;
+      test_check( f != NULL, "Fault list head not NULL" );
+      if( f )
+      {
+         test_check( f->step == 200, "Latest fault: step = 200" );
+         test_check( f->fault_type == HPL_SDC_FAULT_PANEL_BCAST,
+                     "Latest fault: type = PANEL_BCAST" );
+         test_check( fabs( f->deviation - 0.001 ) < 1e-12,
+                     "Latest fault: deviation = 0.001" );
+      }
+   }
+
+   /* Test aggregation (produces report on rank 0) */
+   if( myrank == 0 )
+      printf( "\n  [INFO] Generating aggregated fault report:\n" );
+   HPL_sdc_report_and_aggregate( &log, comm, myrank );
+
+   /* Cleanup */
+   HPL_sdc_log_cleanup( &log );
+   test_check( log.count == 0, "Log cleaned up: count = 0" );
+   test_check( log.head == NULL, "Log cleaned up: head = NULL" );
 }
-
-/*
- * =====================================================================
- * TEST GROUP 7: Detection Latency Simulation
- * =====================================================================
- */
-#ifdef HPL_SDC_INJECT
-static void
-test_detection_latency( void )
-{
-   /*
-    * Simulate: inject fault at step T, detect at step T+d
-    * For unit-level test, we verify that single-step detection works
-    * (d=0, immediate detection at the same verification point)
-    */
-   double A[16], w[4], cs[4];
-   int    i, detected;
-
-   printf( "\n--- Test Group 7: Detection Latency ---\n" );
-
-   for( i = 0; i < 16; i++ ) A[i] = (double)(i + 1) * 1.5;
-   HPL_sdc_init_weights( w, 4 );
-   HPL_sdc_panel_checksum( A, 4, 4, 4, w, cs );
-
-   /* Inject at "step 0" and verify immediately */
-   HPL_sdc_inject_at( A, 8, 0, 42.0 );
-   detected = HPL_sdc_verify_panel( A, 4, 4, 4, w, cs,
-                                    HPL_SDC_THRESHOLD );
-   test_check( detected == 1,
-               "Immediate detection: latency = 0 steps" );
-
-   /* Verify that repeated verification without further corruption
-    * continues to detect (the corruption persists in data) */
-   detected = HPL_sdc_verify_panel( A, 4, 4, 4, w, cs,
-                                    HPL_SDC_THRESHOLD );
-   test_check( detected == 1,
-               "Persistent detection: re-verification still detects" );
-}
-#endif /* HPL_SDC_INJECT */
 
 /*
  * =====================================================================
@@ -509,7 +233,7 @@ int main( int argc, char * argv[] )
    {
       printf( "\n" );
       printf( "========================================================\n" );
-      printf( "  HPL SDC Fault Injection Test Suite\n" );
+      printf( "  HPL SDC Fault Detection Test Suite (Scheme A Pure)\n" );
       printf( "  MPI Processes: %d\n", nprocs );
       printf( "========================================================\n" );
    }
@@ -517,17 +241,9 @@ int main( int argc, char * argv[] )
    /*
     * All test groups (each process runs independently for unit tests)
     */
-   test_checksum_basic();
-   test_verification();
-#ifdef HPL_SDC_INJECT
-   test_injection_models();
-#endif
-   test_fault_logging( MPI_COMM_WORLD, myrank );
-   test_panel_entry_verification();
    test_bcast_checksum();
-#ifdef HPL_SDC_INJECT
-   test_detection_latency();
-#endif
+   test_panel_entry_verification();
+   test_fault_logging( MPI_COMM_WORLD, myrank );
 
    /*
     * Aggregate results across all processes

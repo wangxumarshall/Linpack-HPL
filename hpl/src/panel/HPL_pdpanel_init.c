@@ -343,17 +343,6 @@ void HPL_pdpanel_init
                        /* Initialize the first entry of the workarray */
    *(PANEL->IWORK) = -1;
 #ifdef HPL_SDC_CHECK
-   PANEL->CS_PANEL  = (double *)malloc( (size_t)Mmax(1,JB) * sizeof(double) );
-   PANEL->CS_WEIGHTS = (double *)malloc( (size_t)Mmax(1,mp) * sizeof(double) );
-   if( ! (PANEL->CS_PANEL && PANEL->CS_WEIGHTS) )
-   {
-      if( PANEL->CS_PANEL  ) { free( PANEL->CS_PANEL  ); PANEL->CS_PANEL  = NULL; }
-      if( PANEL->CS_WEIGHTS){ free( PANEL->CS_WEIGHTS);PANEL->CS_WEIGHTS = NULL; }
-   }
-   else
-   {
-      HPL_sdc_init_weights( PANEL->CS_WEIGHTS, mp );
-   }
    PANEL->cs_bcast    = 0.0;
    PANEL->sdc_step    = 0;
 #endif

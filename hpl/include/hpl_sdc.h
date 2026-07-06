@@ -28,9 +28,6 @@
 #define HPL_SDC_THRESHOLD             1.0e-10
 #endif
 
-#ifndef HPL_SDC_WEIGHT_WINDOW
-#define HPL_SDC_WEIGHT_WINDOW         16
-#endif
 
 #ifndef HPL_SDC_NODE_NAME_LEN
 #define HPL_SDC_NODE_NAME_LEN         64
@@ -96,22 +93,13 @@ extern HPL_T_SDC_LOG HPL_sdc_global_log;
  */
 
 /* Checksum computation (HPL_sdc_checksum.c) */
-void   HPL_sdc_init_weights
-STDC_ARGS( ( double *, const int ) );
-double HPL_sdc_col_checksum
-STDC_ARGS( ( const double *, const int, const int, const int, const double * ) );
-void   HPL_sdc_panel_checksum
-STDC_ARGS( ( const double *, const int, const int, const int, const double *, double * ) );
 void   HPL_sdc_compute_bcast_checksum
 STDC_ARGS( ( const double *, const int, const int, const double *, const int, const double *,
-              const int, const double *, double * ) );
+              const int, double * ) );
 
 /* Verification (HPL_sdc_verify.c) */
 int    HPL_sdc_verify_checksum
 STDC_ARGS( ( const double, const double, const double ) );
-int    HPL_sdc_verify_panel
-STDC_ARGS( ( const double *, const int, const int, const int, const double *,
-              const double *, const double ) );
 int    HPL_sdc_verify_panel_entry
 STDC_ARGS( ( const double *, const int, const int, const int ) );
 

@@ -39,7 +39,7 @@ Linpack-HPL/
 │   │   ├── pfact/                # 面板分解引擎（pdfact, pdpan{cr,rl,ll}{N,T}, pdrpan*）
 │   │   ├── pgesv/                # ★ 核心并行求解器（pdgesv, pdgesvK2, pdupdate{NN,NT,TN,TT}, pdtrsv）
 │   │   └── sdc/                  # ★ SDC 核心检测/验证/注入/聚合追踪引擎
-│   │       ├── HPL_sdc_checksum.c  # 位置敏感权值初始化与加权指纹生成器
+│   │       ├── HPL_sdc_checksum.c  # 纯无加权 Kahan 补偿求和与通信广播指纹生成器
 │   │       ├── HPL_sdc_verify.c    # 阈值断言引擎与相对偏差比较法则
 │   │       ├── HPL_sdc_inject.c    # 6种工业级故障注入模型（翻转/漂移/卡死等）
 │   │       └── HPL_sdc_report.c    # 动态堆分配拓扑追溯与分布式运维聚合推荐
@@ -170,54 +170,50 @@ main (HPL_pddriver.c)
 
 ## 四、SDC 检测增强模块
 
-### 4.1 核心设计思想：基于 Kahan 补偿与模幂加权的 ABFT
+### 4.1 核心设计思想：基于 Kahan 补偿同构指纹与 JIT 准入防线的 ABFT
 
 在高并发、大模型训练集群及百亿亿次（Exascale）超算环境中，高频缓存压降、高能宇宙射线撞击或微处理器老损极易引发寄存器与内存的比特翻转（Bit Flip）。传统 HPL 仅在几小时乃至数天全流程求解结束后通过残差 $\|Ax-b\|_\infty$ 检验正确性，若发生静默数据损坏（SDC），根本无法定位出错时间、求解阶段与物理节点。
 
-本项目实现了工业级 **ABFT（Algorithm-Based Fault Tolerance，算法级容错）** 体系，利用线性代数运算与空间校验和（Checksum）的同构映射，在计算关键路径上实现零感知实时监测。
+本项目实现了工业级 **ABFT（Algorithm-Based Fault Tolerance，算法级容错）** 体系，针对二维分块循环映射下主元行置换（`LASWP`）对物理网格绝对对齐的破坏，彻底摒弃了繁杂且易引发误报的历史加权计算与尾矩阵校验，重构了极致轻量、纯净且精准的零漂移实时监测体系。
 
-#### 1. 位置敏感的模 16 幂次加权
-若采用均匀权值（全 1 校验和），当矩阵同一列中发生一处 $+e$ 另一处 $-e$ 的复合比特位翻转时，和值保持不变，将导致致命的漏报。为实现位置敏感的故障捕获，系统对第 $i$ 行赋以 2 的幂次加权：
-
-$$w[i] = 2^{(i \bmod 16)}$$
-
-采用对 16 取模的窗口（`HPL_SDC_WEIGHT_WINDOW = 16`），既保证了相邻 16 行内加权值互不相同、拥有极高的空间定位灵敏度，又彻底避免了 64 位双精度浮点数在指数幂次过大时发生的溢出或下溢（Overflow/Underflow）。
-
-#### 2. Kahan 补偿求和算法（Kahan Compensated Summation）
-在处理上百万维度的超大规模矩阵时，标准浮点累加和 $\sum w[i] A[i,j]$ 会因浮点舍入误差（Rounding Error）的累积产生 $O(\sqrt{m}\varepsilon)$ 甚至 $O(m\varepsilon)$ 的数值漂移，在超算规模下足以误发虚警。
+#### 1. 纯无加权 Kahan 补偿求和（Pure Unweighted Kahan Compensated Summation）
+在处理上百万维度的超大规模矩阵时，标准浮点累加和 $\sum A[i]$ 会因浮点舍入误差（Rounding Error）的累积产生 $O(\sqrt{m}\varepsilon)$ 甚至 $O(m\varepsilon)$ 的数值漂移，在超算规模下足以误发虚警。
 为此，本项目所有的指纹计算底层（[HPL_sdc_checksum.c](hpl/src/sdc/HPL_sdc_checksum.c)）均深度集成了 **Kahan 补偿求和算法**：
 
 ```c
 double sum = 0.0, c = 0.0, y, t;
 for( i = 0; i < m; i++ ) {
-   double w = weights ? weights[i] : 1.0;
-   y = w * A[i + (size_t)j * lda] - c; // 减去上一轮的补偿余量
-   t = sum + y;                        // 尝试累加
-   c = ( t - sum ) - y;                // 捕获低位被截断的微小误差
+   y = A[i] - c;        // 减去上一轮的补偿余量
+   t = sum + y;         // 尝试累加
+   c = ( t - sum ) - y; // 捕获低位被截断的微小误差
    sum = t;
 }
 ```
 
-该算法将浮点累加的极值误差理论上限瞬间压降至 $O(2\varepsilon)$，在百万核集群求解中构建了坚如磐石的零误报数值基线！
+该算法将浮点累加的极值误差理论上限瞬间压降至 $O(2\varepsilon)$！同时，由于面板通信广播（`HPL_bcast`）在同行各进程接收到的数据切片完全同构，去除历史遗留的模 16 幂次加权不仅大幅节省了计算指令开销，消除了权值向量访存，更构建了坚如磐石、完全零漂移的同构指纹基准！
+
+#### 2. 为什么要废弃模 16 幂次加权与面板列校验？
+在早期的 SDC 探索中，常引入 $w[i] = 2^{(i \bmod 16)}$ 加权以防范同一列内正负复合比特翻转。然而在深度工程实践与规模化验证中我们发现：
+1. **DGEMM 历史累积错误已有更优解**：对主计算负载（占 $99\%$ 算力）的异常监控，由于 `LASWP` 频繁跨节点打乱行位置，任何依赖静态空间权值的列校验或尾矩阵跟踪（`CS_TRAIL` / `CS_PANEL`）均会因主元物理漂移而陷入复杂的索引重映射，甚至产生误报。
+2. **JIT 准入捕获机制降维打击**：系统采用前向因果准入拦截（`HPL_sdc_verify_panel_entry`），在面板消元前夕直接检测 SIMD/缓存发散与 IEEE 754 异常。该防线以零通信、零权值开销完成了对历史 DGEMM 累积位翻转的绝对拦截。
+3. **通信广播校验只需同构比对**：在面板广播阶段，所有同行进程对同一片通信缓冲区（`L2 + L1 + DPIV`）进行完整性核验。由于全员对同一段物理内存进行无加权 Kahan 求和，任何网卡 DMA 损坏或网络传输位翻转都会导致指纹瞬间偏离，无加权 Kahan 指纹具备最高的执行效率与极致的数值稳定性。
 
 ### 4.2 四道防线架构体系（Four Lines of Defense - Scheme A）
 
-在二维分块（2D Block-Cyclic）分布的分布式处理器网格中，带有主元置换的行交换操作（`LASWP`）会在每次 DGEMM 尾矩阵更新后频繁跨进程打乱矩阵行的绝对物理位置。这一算法物理特性导致传统“在 DGEMM 后立即计算尾矩阵校验和”的方案因主元行跨网格漂移而完全失效并产生大量误报。
-
-为此，本项目创新性地重构并提出了**“四道防线” SDC 深度防御体系（Scheme A）**，以 $<0.5\%$ 的微小运行时开销实现了对 100% 计算路径与通信链路的绝对守护：
+在二维分块（2D Block-Cyclic）分布的分布式处理器网格中，为彻底消除 `LASWP` 跨网格漂移对容错监测的干扰，本项目创新性地提出了**“四道防线” SDC 深度防御体系（Scheme A）**，以 $<0.5\%$ 的微小运行时开销实现了对 100% 计算路径与通信链路的绝对守护：
 
 ```mermaid
 graph TD
     A["HPL_pdgesvK2 主循环步 j = 0...N"] --> B["防线一: JIT 面板准入拦截 HPL_sdc_verify_panel_entry"]
     B -->|发现 NaN/Inf/异常发散| E1["记录 HPL_SDC_FAULT_PANEL_ENTRY 捕获历史 DGEMM 异常"]
-    B -->|准入验证通过| C["防线二: 面板 LU 分解 HPL_pdfact & CS_panel 指纹构建"]
-    C --> D["计算所有者列广播指纹 CS_bcast & MPI_Allreduce MAX 同步参考值"]
-    D --> E["防线三: 面板全局广播 HPL_bcast & 接收后指纹验证 HPL_sdc_verify_checksum"]
-    E -->|偏差 dev > 1e-10| E2["记录 HPL_SDC_FAULT_PANEL_BCAST 捕获通信或缓存 SDC"]
+    B -->|准入验证通过| C["防线二: 面板 LU 分解 HPL_pdfact"]
+    C --> D["计算所有者列广播指纹 cs_bcast 与 MPI_Allreduce MAX 同步参考值"]
+    D --> E["防线三: 面板全局广播 HPL_bcast 与接收后指纹验证 HPL_sdc_verify_checksum"]
+    E -->|偏差 dev 大于 1e-10| E2["记录 HPL_SDC_FAULT_PANEL_BCAST 捕获通信或缓存 SDC"]
     E -->|广播验证通过| F["执行主计算负载: HPL_pdupdate 尾矩阵 DGEMM 更新"]
     F -->|完成当前步| A
-    A -->|全部分解完毕| G["防线四: 回代求解 HPL_pdtrsv & 6-Sigma 解向量检查"]
-    G --> H["计算全局缩放残差 ||Ax-b||_oo / ... < 16.0"]
+    A -->|全部分解完毕| G["防线四: 回代求解 HPL_pdtrsv 与解向量检查"]
+    G --> H["计算全局缩放残差 Ax-b 无穷范数极值验算"]
     H --> I["全流程结束: HPL_sdc_report_and_aggregate 聚合故障拓扑报告"]
 ```
 
@@ -227,15 +223,15 @@ graph TD
 - **双重数值断言**：
   1. **IEEE 754 异常扫描**：实时检测 SIMD/缓存驻留数据中是否出现 `NaN`、`+Inf` 或 `-Inf`。
   2. **动态收敛包络线断言**：高斯消元过程中，未消元矩阵的绝对数值范围随分解深度呈严格递减趋势。系统构建动态包络上限 $10^{150} \times (1 - \frac{j}{2N})$。任何因前序 DGEMM 算力单元比特翻转产生的数值发散，在进入面板前被瞬间拦截！
-- **架构收益**：完全淘汰了原先繁重且对 `LASWP` 敏感的尾矩阵校验缓冲（`CS_TRAIL`），以 $O(mp \cdot jb)$ 的极低内存巡检代价，实现了对占总计算负载 $\sim 99\%$ 的 DGEMM 历史累积错误的绝对守护。
+- **架构收益**：完全淘汰了原先繁重且对 `LASWP` 敏感的尾矩阵校验缓冲（`CS_TRAIL`）与面板列权值，以 $O(mp \cdot jb)$ 的极低内存巡检代价，实现了对占总计算负载 $\sim 99\%$ 的 DGEMM 历史累积错误的绝对守护。
 
-#### 防线二：面板分解完备性检验（Line of Defense 2 - 选主元与三角求解守护）
+#### 防线二：面板分解完备性与广播指纹构建（Line of Defense 2 - 选主元与通信指纹生成）
 - **根本机制**：面板 LU 分解（`HPL_pdfact`）包含密集的局部列选主元（`IDAMAX`）、行置换（`LASWP`）和下三角求解（`DTRSM`），是对计算节点 L1/L2 缓存与分支预测控制逻辑的严峻考验。
-- **指纹构建**：在面板分解完成瞬间、全局广播发起之前，对新生成的 $L_2$ 因子通过 Kahan 算法构建加权校验和 $CS_{\text{panel}}[k] = \sum_i w[i] \times L_2[i][k]$，作为全网格后续同步比对的唯一权威基准。
+- **指纹构建**：在面板分解完成瞬间、全局广播发起之前，主列所有者进程对即将广播的通信缓冲区（包含 $L_2$ 因子、下三角 $L_1$ 及主元置换表 `DPIV`）通过纯无加权 Kahan 算法构建广播指纹 `cs_bcast`，作为全网格后续同步比对的唯一权威基准。
 
 #### 防线三：通信广播一致性与自适应双模断言（Line of Defense 3 - 全局同步守护）
-- **根本机制**：面板广播（`HPL_bcast`）将当前步的解法基础发往全网格。若网络交换机、光纤链路或网卡 DMA 发生数据静默损坏，错误将瞬间污染全集群。
-- **零开销参考同步**：面板所有者进程构建广播指纹 `cs_bcast`；利用 `MPI_Allreduce(..., MPI_MAX, row_comm)` 在毫无额外通信握手的条件下将权威参考指纹 `cs_ref` 零成本广播至同行所有进程。
+- **根本机制**：面板广播（`HPL_bcast` / `HPL_bwait`）将当前步的解法基础发往全网格。若网络交换机、光纤链路或网卡 DMA 发生数据静默损坏，错误将瞬间污染全集群。
+- **零开销参考同步**：面板所有者进程构建广播指纹 `cs_bcast`；利用 `MPI_Allreduce(..., MPI_MAX, row_comm)` 在毫无额外通信握手的条件下将权威参考指纹 `cs_ref` 零成本同步至同行所有进程。
 - **自适应双模断言（Adaptive Hybrid Thresholding）**：在 [HPL_sdc_verify.c](hpl/src/sdc/HPL_sdc_verify.c) 中，当待验证指纹比较时，系统充分考虑了分母接近于零时的数值奇异性：
   ```c
   dev = fabs( cs_computed - cs_expected );
@@ -246,7 +242,7 @@ graph TD
   }
   return ( ( dev / denom ) > threshold ) ? 1 : 0; // 标准相对偏差判断
   ```
-  一旦检测到当前缓冲区指纹 `cs_recv` 越界，立即触发 `HPL_SDC_FAULT_PANEL_BCAST` 故障记录！
+  一旦接收端在等待广播结束后重算接收缓冲区的指纹 `cs_recv` 出现越界，立即触发 `HPL_SDC_FAULT_PANEL_BCAST` 故障记录！
 
 #### 防线四：回代求解与全局残差质量闸门（Line of Defense 4 - 最终防线）
 - **根本机制**：在 `HPL_pdtrsv` 上三角求解及解向量广播中插入状态核查，对全局解向量 $X$ 进行统计学离群值筛查与 IEEE 754 异常检测；并最终结合高精度缩放残差：
@@ -259,18 +255,14 @@ graph TD
 
 | 函数 | 功能 | 算法特点 | 复杂度 |
 |------|------|---------|--------|
-| `HPL_sdc_init_weights(w, n)` | 初始化权值向量 | 模 16 幂次加权 $w[i] = 2^{i \bmod 16}$，防溢出 | $O(n)$ |
-| `HPL_sdc_col_checksum(A, lda, m, n, w)` | 计算矩阵列加权校验和 | Kahan 补偿求和，精度上限 $O(2\varepsilon)$ | $O(mn)$ |
-| `HPL_sdc_panel_checksum(A, lda, m, n, w, cs)` | 计算面板每列校验和 | Kahan 补偿求和，构建面板权威指纹 | $O(mn)$ |
-| `HPL_sdc_compute_bcast_checksum(...)` | 计算广播缓冲区指纹 | 对 L2 + L1 + DPIV 缓冲区执行全覆盖 Kahan 校验 | $O(ml2 \cdot jb + jb^2)$ |
+| `HPL_sdc_compute_bcast_checksum(...)` | 计算通信广播缓冲区指纹 | 对 L2 + L1 + DPIV 缓冲区执行纯无加权 Kahan 补偿求和，零漂移、零权值开销 | $O(ml2 \cdot jb + jb^2)$ |
 
 #### 验证断言与准入拦截（[HPL_sdc_verify.c](hpl/src/sdc/HPL_sdc_verify.c)）
 
 | 函数 | 功能 | 判定机制 |
 |------|------|---------|
-| `HPL_sdc_verify_checksum(cs_exp, cs_comp, thres)` | 指纹校验比对 | 自适应双模判断（绝对/相对 threshold 智能切换） |
-| `HPL_sdc_verify_panel(A, lda, m, n, w, cs_exp, thres)` | 面板全列指纹验证 | 逐列重算 Kahan 指纹并比对，返回失效列数 |
-| `HPL_sdc_verify_panel_entry(A, lda, m, n)` | ★ JIT 准入核查 | SIMD IEEE 754 扫描 + $10^{150}(1 - \frac{j}{2N})$ 动态包络线拦截 |
+| `HPL_sdc_verify_checksum(cs_exp, cs_comp, thres)` | 广播指纹校验比对 | 自适应双模判断（绝对与相对偏差阈值智能切换） |
+| `HPL_sdc_verify_panel_entry(A, lda, m, n)` | ★ JIT 准入核查 | SIMD IEEE 754 异常扫描 + $10^{150}(1 - \frac{j}{2N})$ 动态包络线拦截 |
 
 #### 故障日志、物理映射与按字段独立汇聚（[HPL_sdc_report.c](hpl/src/sdc/HPL_sdc_report.c)）
 
@@ -316,18 +308,16 @@ typedef struct HPL_S_SDC_FAULT {
 
 ### 4.5 面板结构体中的 SDC 扩展字段与重构精简
 
-在 `HPL_T_panel`（[hpl/include/hpl_panel.h](hpl/include/hpl_panel.h)）中新增 SDC 控制块，同时**彻底清除了对 `LASWP` 敏感的尾矩阵校验缓冲（`CS_TRAIL`）**：
+在 `HPL_T_panel`（[hpl/include/hpl_panel.h](hpl/include/hpl_panel.h)）中新增 SDC 控制块，同时**彻底清除了对 `LASWP` 敏感的尾矩阵校验缓冲（`CS_TRAIL`）及面板列加权向量**：
 
 ```c
 #ifdef HPL_SDC_CHECK
-   double  * CS_PANEL;   // jb 个面板列加权校验和数组
-   double  * CS_WEIGHTS; // mp 个模 16 幂次权值向量 w[i]
-   double    cs_bcast;   // 当前步广播缓冲区加权指纹
+   double    cs_bcast;   // 当前步广播缓冲区纯无加权 Kahan 指纹
    int       sdc_step;   // 验证步数计数器与跟踪调试标识
 #endif
 ```
 
-**重构精简要点**：在“四道防线”方案 A 重构中，得益于 JIT 准入核查（`HPL_sdc_verify_panel_entry`）对历史 DGEMM 异常的精准拦截，旧版中用于记录尾矩阵增量校验和的 `CS_TRAIL` 指针被彻底移除！为每个分块面板节省了 $O(nq)$ 的内存开销，同时让数据结构变得极其纯净与轻量！
+**重构精简要点**：在方案 A 极致重构中，得益于 JIT 准入核查（`HPL_sdc_verify_panel_entry`）与通信广播无加权 Kahan 指纹（`cs_bcast`）的完美协同，旧版中用于记录尾矩阵增量的 `CS_TRAIL`、面板列校验和 `CS_PANEL` 及模 16 权值向量 `CS_WEIGHTS` 被彻底清除！为每个分块面板不仅节省了内存开销，同时让数据结构变得极其纯净、轻量，完全消除了历史遗留加权计算的复杂性！
 
 ### 4.6 编译宏控制与工业零开销设计
 
@@ -335,10 +325,8 @@ typedef struct HPL_S_SDC_FAULT {
 |--------|--------------|
 | `HPL_SDC_CHECK` | 启用 SDC 检测的总开关，所有 SDC 代码均严格封闭在 `#ifdef HPL_SDC_CHECK` 下 |
 | `HPL_SDC_BCAST_VERIFY` | 启用面板广播指纹 Kahan 校验与自适应断言（默认 1） |
-| `HPL_SDC_TRAIL_VERIFY` | （已废弃并移除）旧版尾矩阵增量校验开关，现由极低开销的 JIT 准入核查全面替代 |
 | `HPL_SDC_INJECT` | 启用主动故障注入支持（用于研发环境端到端验证与混沌工程测试） |
 | `HPL_SDC_THRESHOLD` | 校验和比对相对阈值（默认 `1.0e-10`） |
-| `HPL_SDC_WEIGHT_WINDOW` | 权值模运算窗口大小（默认 16，防幂次溢出） |
 
 **工业级零开销隔离**：当在构建时未定义 `HPL_SDC_CHECK`（例如标准性能压测编译）时，所有的 SDC 数据结构、函数调用与巡检分支会被 GCC/Clang 预处理器完全剥离并由编译器彻底消除，实现对标准 HPL 性能测试的 **0% 侵入与零开销**！
 

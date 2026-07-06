@@ -198,14 +198,14 @@ void HPL_pdgesv0
       HPL_pdfact(               panel[0] );
       (void) HPL_binit(         panel[0] );
 #ifdef HPL_SDC_CHECK
-      if( GRID->mycol == panel[0]->pcol && panel[0]->CS_PANEL )
+      if( GRID->mycol == panel[0]->pcol )
       {
          int _ml2 = ( panel[0]->grid->myrow == panel[0]->prow ?
                       panel[0]->mp - panel[0]->jb : panel[0]->mp );
          _ml2 = Mmax( 0, _ml2 );
          HPL_sdc_compute_bcast_checksum( panel[0]->L2, panel[0]->ldl2,
             _ml2, panel[0]->L1, panel[0]->jb, panel[0]->DPIV,
-            panel[0]->jb, panel[0]->CS_WEIGHTS, &(panel[0]->cs_bcast) );
+            panel[0]->jb, &(panel[0]->cs_bcast) );
       }
       else
       {
@@ -227,7 +227,7 @@ void HPL_pdgesv0
          _ml2 = Mmax( 0, _ml2 );
          HPL_sdc_compute_bcast_checksum( panel[0]->L2, panel[0]->ldl2,
             _ml2, panel[0]->L1, panel[0]->jb, panel[0]->DPIV,
-            panel[0]->jb, panel[0]->CS_WEIGHTS, &cs_recv );
+            panel[0]->jb, &cs_recv );
          if( HPL_sdc_verify_checksum( panel[0]->cs_bcast, cs_recv,
                                       HPL_SDC_THRESHOLD ) )
          {

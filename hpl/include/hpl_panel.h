@@ -93,8 +93,6 @@ typedef struct HPL_S_panel
    int                 ldl2;         /* local leading dim of array L2 */
    int                 len;      /* length of the buffer to broadcast */
 #ifdef HPL_SDC_CHECK
-   double              * CS_PANEL;  /* jb checksum values for panel cols */
-   double              * CS_WEIGHTS; /* mp weights for checksum computation */
    double                cs_bcast;  /* checksum of broadcast buffer */
    int                   sdc_step;  /* per-panel pdupdate call counter */
 #endif

@@ -39,42 +39,7 @@ int HPL_sdc_verify_checksum( cs_expected, cs_computed, threshold )
    return ( ( dev / denom ) > threshold ) ? 1 : 0;
 }
 
-#ifdef STDC_HEADERS
-int HPL_sdc_verify_panel
-(
-   const double * A,
-   const int      lda,
-   const int      m,
-   const int      n,
-   const double * weights,
-   const double * cs_expected,
-   const double   threshold
-)
-#else
-int HPL_sdc_verify_panel( A, lda, m, n, weights, cs_expected, threshold )
-   const double * A; const int lda, m, n;
-   const double * weights; const double * cs_expected; const double threshold;
-#endif
-{
-/*
- * Purpose
- * =======
- * Verify panel checksums using robust Kahan summation from HPL_sdc_panel_checksum.
- * Returns number of mismatched columns (0 if all columns match).
- */
-   int k, failed = 0;
-   double cs_comp;
 
-   if( !A || !cs_expected ) return 0;
-
-   for( k = 0; k < n; k++ )
-   {
-      HPL_sdc_panel_checksum( A + (size_t)k * lda, lda, m, 1, weights, &cs_comp );
-      if( HPL_sdc_verify_checksum( cs_expected[k], cs_comp, threshold ) )
-         failed++;
-   }
-   return failed;
-}
 
 #ifdef STDC_HEADERS
 int HPL_sdc_verify_panel_entry
