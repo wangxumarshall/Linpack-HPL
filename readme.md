@@ -75,7 +75,7 @@ Linpack-HPL/
 为平衡各节点的计算与通信负载，HPL 采用二维块循环映射。全局矩阵 $A$ 被划分大小为 $NB \times NB$（通常 $NB=192$ 或 $256$）的子块，按行循环和列循环的方式映射到 $P \times Q$ 的二维进程网格（Process Grid）上。对于全局矩阵坐标 $(i, j)$，其对应的进程坐标为：
 
 $$
-\text{proc\\_row} = \left( \lfloor i / NB \rfloor \right) \bmod P, \quad \text{proc\\_col} = \left( \lfloor j / NB \rfloor \right) \bmod Q
+\text{proc-row} = \left( \lfloor i / NB \rfloor \right) \bmod P, \quad \text{proc-col} = \left( \lfloor j / NB \rfloor \right) \bmod Q
 $$
 
 ### 3.2 右瞻 LU 分解与 Look-ahead 异步深度通信
@@ -172,7 +172,7 @@ graph TD
   2. **动态收敛包络线断言**：在正常高斯消元中，未消元子矩阵的元素绝对范围处于严格的收敛包络线内。我们根据步数 $j$ 设定了严格的上限阈值公式：
 
 $$
-\text{Upper\\_Bound}(j) = 10^{150} \times \left(1 - \frac{j}{2N}\right)
+\text{Upper-Bound}(j) = 10^{150} \times \left(1 - \frac{j}{2N}\right)
 $$
 
    任何超出此收敛包络线的元素立即被判定为 SDC 故障。
