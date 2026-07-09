@@ -1,12 +1,12 @@
 # HPL (High Performance Linpack) — 含 SDC 静默数据损坏检测增强
 
-[![License](https://img.shields.io/badge/license-BSD--3-blue.svg)](file:///C:/Users/ubuntu/Documents/Linpack-HPL/COPYING)
+[![License](https://img.shields.io/badge/license-BSD--3-blue.svg)](COPYING)
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)]()
 [![SDC Protection](https://img.shields.io/badge/SDC%20Protection-4--Lines%20of%20Defense-orange.svg)]()
 
-本工程是 **High Performance Linpack (HPL) 2.3** 的深度修改与增强版本，专为**百亿亿次（Exascale）超算集群**设计，在底层融合了**静默数据损坏（Silent Data Corruption, SDC）**实时检测与定位功能。
+本工程基于 **High Performance Linpack (HPL) 2.3** ，底层融合**静默数据损坏（Silent Data Corruption, SDC）**实时检测与定位功能。
 
-通过结合**算法基容错（ABFT）**、**Kahan 无差错补偿求和**、**自适应双模断言**与**按字段独立聚类汇聚技术**，本工程彻底解决了传统超算基准测试中 SDC **“检测滞后、不可归因、不可定位”** 的三大行业痛点，在保持 **< 0.5% 极低运行时开销**的前提下，提供了细粒度到**物理计算节点**的健康诊断与故障隔离能力。
+通过结合**算法基容错（ABFT）**、**Kahan 无差错补偿求和**、**自适应双模断言**与**按字段独立聚类汇聚技术**，应对基准测试中SDC **“检测滞后、不可归因、不可定位”** 的痛点，**< 0.5% 极低运行时开销**前提下，提供细粒度到**物理计算节点/CPU核**的健康诊断能力。
 
 ---
 
@@ -14,7 +14,10 @@
 
 ### 1.1 HPL 核心目标与 FLOPS 评估
 HPL 是国际超级计算机 TOP500 榜单的官方测评基准。其核心任务是生成并求解一个稠密线性代数方程组 $A \cdot x = b$，通过统计求解时间 $T$ 来计算系统的浮点峰值性能（FLOPS）：
-$$R = \frac{\frac{2}{3}N^3 + \frac{3}{2}N^2}{T}$$
+
+```math
+R = \frac{\frac{2}{3}N^3 + \frac{3}{2}N^2}{T}
+```
 其中：
 * $N$ 为全局矩阵的阶数（通常在超算评测中 $N \ge 10^6$）。
 * $\frac{2}{3}N^3$ 为高斯消元法（LU 分解）的浮点运算次数。
@@ -25,14 +28,11 @@ $$R = \frac{\frac{2}{3}N^3 + \frac{3}{2}N^2}{T}$$
 2. **完全不可定位**：由于矩阵数据在 2D 块循环网格中全场通信，故障一旦发生就会在 MPI 广播和尾矩阵更新中瞬间污染全集群，根本无法追溯是哪一台物理主机发生了硬件故障。
 3. **传统 ABFT 开销过高**：文献中的全局校验和或加权跟踪方案需要在每步消元中维护庞大的权值矩阵（如 `CS_TRAIL`），在通信密集型集群中引入 > 10% 的额外开销，导致 TOP500 打分严重下降。
 
-### 1.3 我们的解决方案：工业级零开销“四道防线”
-本项目通过重构 HPL 分布式流水线，提出了**“四道防线（4 Lines of Defense）”**纵深防御体系。通过在 Look-ahead 右瞻求解的前夕插入 **JIT 面板准入校验**，系统不仅能捕获 99% 的累积算力错误，还直接**废弃了内存沉重的尾矩阵增量跟踪与加权向量**。配合自适应双模阈值与独立字段汇聚技术，实现了 **0.00% 侵入开销（当编译宏关闭时）** 与 **< 0.5% 的极低防护开销（当开启时）**。
-
+### 1.3 解决方案
+在 Look-ahead 右瞻求解的前夕插入 **JIT 面板准入校验**。
 ---
 
 ## 二、 项目目录结构
-
-工程目录结构保持了经典 HPL 的模块化布局，并在核心求解器与扩展目录中深植了 SDC 防护代码：
 
 ```text
 Linpack-HPL/
@@ -70,18 +70,21 @@ Linpack-HPL/
 
 ## 三、 HPL 核心算法与分布式流水线
 
-### 3.1 2D 块循环数据分布 (2D Block-Cyclic Distribution)
+### 3.1 2D 块循环数据分布
 为平衡各节点的计算与通信负载，HPL 采用二维块循环映射。全局矩阵 $A$ 被划分大小为 $NB \times NB$（通常 $NB=192$ 或 $256$）的子块，按行循环和列循环的方式映射到 $P \times Q$ 的二维进程网格（Process Grid）上。对于全局矩阵坐标 $(i, j)$，其对应的进程坐标为：
-$$\text{proc\_row} = \left( \lfloor i / NB \rfloor \right) \bmod P, \quad \text{proc\_col} = \left( \lfloor j / NB \rfloor \right) \bmod Q$$
+
+```math
+\text{proc\_row} = \left( \lfloor i / NB \rfloor \right) \bmod P, \quad \text{proc\_col} = \left( \lfloor j / NB \rfloor \right) \bmod Q
+```
 
 ### 3.2 右瞻 LU 分解与 Look-ahead 异步深度通信
-HPL 求解的核心是右瞻法（Right-Looking）LU 分解。为了隐藏通信延迟，HPL 引入了 **Look-ahead（前瞻/右瞻）通信与计算重叠机制**（参见 [HPL_pdgesvK2.c](file:///C:/Users/ubuntu/Documents/Linpack-HPL/hpl/src/pgesv/HPL_pdgesvK2.c)）：
+HPL 求解核心采用右瞻法（Right-Looking）LU 分解。为了隐藏通信延迟，HPL 引入 **Look-ahead（前瞻/右瞻）通信与计算重叠机制**（参见 [HPL_pdgesvK2.c](hpl/src/pgesv/HPL_pdgesvK2.c)）：
 1. **更新当前步面板（Panel k）**：对第 $k$ 列子块进行消元。
 2. **异步通信重叠**：面板分解完成后，**立即通过 MPI 异步广播给其他列进程**；与此同时，CPU 优先对下一轮所需的**前瞻面板（Look-ahead Panel $k+1$）**执行局部更新（`DGEMM`）。
 3. **尾矩阵大循环更新**：利用剩余计算资源，对余下的尾矩阵（Trailing Matrix）全面执行矩阵乘法（`DGEMM`）。这种重叠设计的本质是“通信与计算流水线并行”。
 
 ### 3.3 HPL 六种广播通信拓扑表
-在面板广播（`HPL_bcast`）中，不同拓扑对于大规模集群的扩展性极强，本工程对各类拓扑均实现了无缝 SDC 适配：
+在面板广播（`HPL_bcast`）中，不同拓扑对于大规模集群的扩展性极强，本工程对各类拓扑均做SDC适配：
 
 | 拓扑编号 (`BCAST`) | 拓扑名称 | 通信复杂度 | 适用集群规模与特性 |
 | :---: | :--- | :---: | :--- |
@@ -94,15 +97,13 @@ HPL 求解的核心是右瞻法（Right-Looking）LU 分解。为了隐藏通信
 
 ---
 
-## 四、 SDC 检测增强模块 —— 四道防线体系
-
-本节是本项目技术设计的重中之重。针对传统容错方案在 HPL 中“开销大、定位难”的问题，我们摒弃了概念、函数、数据结构割裂的描述方式，围绕**“四道防线（4 Lines of Defense）”**建立了**“因果机制 -> 数学边界 -> 源码映射”**的三维一体闭环。
+## 四、 SDC 检测增强模块
 
 ### 4.1 底层算法基石：Kahan 补偿求和与自适应双模断言
 
 #### 1. Kahan 无差错补偿求和 (Compensated Summation)
 * **痛点**：在百亿亿次超算规模下，待校验的面板缓冲区包含数十万个双精度浮点数。若使用标准循环累加 $\sum A[i]$，浮点舍入误差会随累加次数快速膨胀，产生 $O(\sqrt{m}\varepsilon)$ 甚至 $O(m\varepsilon)$ 的数值漂移，直接掩盖真正的静默位翻转或触发虚警。
-* **解决方案**：我们在 [HPL_sdc_checksum.c](file:///C:/Users/ubuntu/Documents/Linpack-HPL/hpl/src/sdc/HPL_sdc_checksum.c) 中全面采用了 **Kahan 补偿求和算法**。该算法通过维护一个补偿变量 `c`，实现在有限精度运算下捕获低位截断误差，实现真正意义上的零漂移校验和生成：
+* **解决方案**：我们在 [HPL_sdc_checksum.c](hpl/src/sdc/HPL_sdc_checksum.c) 中采用 **Kahan 补偿求和算法**。该算法通过维护一个补偿变量 `c`，实现在有限精度运算下捕获低位截断误差，实现零漂移校验和生成：
 ```c
 double sum = 0.0, c = 0.0, y, t;
 for( i = 0; i < len; i++ ) {
@@ -113,17 +114,23 @@ for( i = 0; i < len; i++ ) {
 }
 ```
 
-#### 2. 自适应双模断言公式 (Adaptive Hybrid Thresholding)
+#### 2. 自适应双模断言公式
 * **痛点**：由于矩阵高斯消元过程中元素量级跨度极大（从初始面板的 $10^{150}$ 衰减至求解尾声的 $10^{-15}$），当参考指纹 $|cs_{exp}|$ 接近零时，常规的相对偏差公式 $|dev| / |cs_{exp}|$ 会因除零发生剧烈发散。
-* **解决方案**：在 [HPL_sdc_verify.c](file:///C:/Users/ubuntu/Documents/Linpack-HPL/hpl/src/sdc/HPL_sdc_verify.c#L9-L40) 中的 `HPL_sdc_verify_checksum` 实现了双模平滑切换公式：
-$$\text{Judgment} = \begin{cases} |cs_{comp} - cs_{exp}| > \max(\text{threshold}, 10^{-12}), & \text{if } |cs_{exp}| < 10^{-4} \\ \frac{|cs_{comp} - cs_{exp}|}{|cs_{exp}|} > \text{threshold}, & \text{otherwise} \end{cases}$$
+* **解决方案**：在 [HPL_sdc_verify.c](hpl/src/sdc/HPL_sdc_verify.c#L9-L40) 中的 `HPL_sdc_verify_checksum` 实现双模平滑切换公式：
+```math
+\text{Judgment} = \begin{cases} 
+|cs_{comp} - cs_{exp}| > \max(\text{threshold}, 10^{-12}), & \text{if } |cs_{exp}| < 10^{-4} \\ 
+\frac{|cs_{comp} - cs_{exp}|}{|cs_{exp}|} > \text{threshold}, & \text{otherwise} 
+\end{cases}
+```
+
 该设计确保了无论是大数消元还是微小零空间校验，系统都能保持严密的数学鲁棒性。
 
 ---
 
-### 4.2 四道防线深度架构与源码深度映射
+### 4.2 四道防线
 
-下面的模块化架构图清楚展示了在一个消元步（Step $k$）和回代步中，四道防线是如何协同拦截并定位静默数据损坏的：
+下面的模块化架构图展示了在一个消元步（Step $k$）和回代步中，四道防线是如何协同拦截并定位静默数据损坏的：
 
 ```mermaid
 graph TD
@@ -157,50 +164,61 @@ graph TD
 ---
 
 #### 🛡️ 防线 1：JIT 面板准入防线 (Cache-Resident Panel Entry Check)
-* **因果机制**：在 Look-ahead 右瞻求解中，第 $k$ 步待分解的面板（宽度 $jb=192$），是前序第 $1$ 到第 $k-1$ 步所有 `DGEMM`（尾矩阵更新）累积计算的结果。因为 `DGEMM` 占据了全过程 ~99% 的浮点运算量，任何在 FPU 运算单元、物理寄存器或内存总线上发生的位翻转，最终必定会汇集并留存在这块面板数据中。因此，**在面板刚被调入 CPU L2/L3 Cache 准备执行 LU 分解前夕进行拦截，是性价比最高、最完美的检漏点**！
+* **Insight**：在 Look-ahead 右瞻求解中，第 $k$ 步待分解的面板（宽度 $jb=192$），是前序第 $1$ 到第 $k-1$ 步所有 `DGEMM`（尾矩阵更新）累积计算的结果。因为 `DGEMM` 占据了全过程 ~99% 的浮点运算量，任何在 FPU 运算单元、物理寄存器或内存总线上发生的位翻转，最终必定会汇集并留存在这块面板数据中。因此，**在面板刚被调入 CPU L2/L3 Cache 准备执行 LU 分解前夕进行拦截，是性价比最高、最完美的检漏点**！
 * **数学边界**：
-  1. **SIMD IEEE 754 异常扫描**：按列扫描缓冲区，瞬间拦截任何 `NaN`、`+Inf` 与 `-Inf`。
+  1. **SIMD IEEE 754 异常扫描**：按列扫描缓冲区，拦截任何 `NaN`、`+Inf` 与 `-Inf`。
   2. **动态收敛包络线断言**：在正常高斯消元中，未消元子矩阵的元素绝对范围处于严格的收敛包络线内。我们根据步数 $j$ 设定了严格的上限阈值公式：
-     $$\text{Upper\_Bound}(j) = 10^{150} \times \left(1 - \frac{j}{2N}\right)$$
+
+     ```math
+     \text{Upper\_Bound}(j) = 10^{150} \times \left(1 - \frac{j}{2N}\right)
+     ```
+
      任何超出此收敛包络线的元素立即被判定为 SDC 故障。
-* **源码深度映射**：
-  * **触发位置**：[HPL_pdgesvK2.c:L193](file:///C:/Users/ubuntu/Documents/Linpack-HPL/hpl/src/pgesv/HPL_pdgesvK2.c#L193)（及 [K1.c:L187](file:///C:/Users/ubuntu/Documents/Linpack-HPL/hpl/src/pgesv/HPL_pdgesvK1.c#L187)、[0.c:L185](file:///C:/Users/ubuntu/Documents/Linpack-HPL/hpl/src/pgesv/HPL_pdgesv0.c#L185)），在调用 `HPL_pdfact(panel[k])` 前紧接执行。
-  * **执行函数**：[HPL_sdc_verify.c](file:///C:/Users/ubuntu/Documents/Linpack-HPL/hpl/src/sdc/HPL_sdc_verify.c#L45-L82) 中的 `HPL_sdc_verify_panel_entry( A, lda, m, n )`。
+* **源码**：
+  * **触发位置**：[HPL_pdgesvK2.c:L193](hpl/src/pgesv/HPL_pdgesvK2.c#L193)（及 [K1.c:L187](hpl/src/pgesv/HPL_pdgesvK1.c#L187)、[0.c:L185](hpl/src/pgesv/HPL_pdgesv0.c#L185)），在调用 `HPL_pdfact(panel[k])` 前紧接执行。
+  * **执行函数**：[HPL_sdc_verify.c](hpl/src/sdc/HPL_sdc_verify.c#L45-L82) 中的 `HPL_sdc_verify_panel_entry( A, lda, m, n )`。
   * **记录动作**：记录 `HPL_SDC_FAULT_PANEL_ENTRY`（对应枚举值 `2`），并记录绝对矩阵切片位置 `ia, ja`。
-  * **★ 架构突破与精简**：正是依靠防线 1 在消元前夕捕获了 99% 的历史 DGEMM 错误，我们**彻底废弃了原版设计中极其沉重且对行交换 (`LASWP`) 敏感的尾矩阵校验和 (`CS_TRAIL`) 及加权跟踪向量 (`CS_WEIGHTS`)**！内存开销与同步延迟实现了质的飞跃。
+  * **★ 架构突破与精简**：正是依靠防线 1 在消元前夕捕获了 99% 的历史 DGEMM 错误，**废弃原版设计中极其沉重且对行交换 (`LASWP`) 敏感的尾矩阵校验和 (`CS_TRAIL`) 及加权跟踪向量 (`CS_WEIGHTS`)**！内存开销与同步延迟实现了质的飞跃。
 
 ---
 
 #### 🛡️ 防线 2：面板分解 ABFT 防线 (Panel Factorization Check)
-* **因果机制**：在面板局部分解中，包含列选主元（`IDAMAX`）、物理行置换（`LASWP`）和三角求解（`DTRSM`）。这些细粒度访存对 CPU 分支预测和 L1 缓存极其敏感。
+* **Insight**：在面板局部分解中，包含列选主元（`IDAMAX`）、物理行置换（`LASWP`）和三角求解（`DTRSM`）。这些细粒度访存对 CPU 分支预测和 L1 缓存极其敏感。
 * **校验逻辑**：利用局部矩阵法则对分解完成的 $L_1 \cdot U + DPIV$ 算子与主元映射合法性进行校验，防止主元索引错误导致整个矩阵正定性崩塌。
-* **源码深度映射**：
-  * **触发位置**：[HPL_pdfact.c](file:///C:/Users/ubuntu/Documents/Linpack-HPL/hpl/src/pgesv/HPL_pdfact.c) 内部分解循环。
+* **源码**：
+  * **触发位置**：[HPL_pdfact.c](hpl/src/pgesv/HPL_pdfact.c) 内部分解循环。
   * **记录动作**：捕获并记录 `HPL_SDC_FAULT_PANEL_FACT`（对应枚举值 `1`）。
 
 ---
 
 #### 🛡️ 防线 3：广播缓冲区防线 (Broadcast Buffer Check)
-* **因果机制**：面板所有者将下三角因子 $L_2, L_1$ 及主元置换表 `DPIV` 沿通信网格的列通讯域（`row_comm`）广播给所有同行进程。如果集群交换机光纤链路、网卡 DMA 或 PCIe 总线发生比特位翻转，错误数据一旦扩散，整个进程网格将陷入脏状态。
+* **Insight**：面板所有者将下三角因子 $L_2, L_1$ 及主元置换表 `DPIV` 沿通信网格的列通讯域（`row_comm`）广播给所有同行进程。如果集群交换机光纤链路、网卡 DMA 或 PCIe 总线发生比特位翻转，错误数据一旦扩散，整个进程网格将陷入脏状态。
 * **数学边界**：
   1. **主进程生成权威指纹**：面板所属列进程对广播缓冲区（`L2` 长度 `ml2` + `L1` 长度 `jb*jb` + `DPIV` 长度 `jb`）执行无差错 Kahan 累加，得出唯一权威指纹 `cs_bcast`。
   2. **轻量级同步与双模比对**：通过 `MPI_Bcast( &(panel[k]->cs_bcast), 1, MPI_DOUBLE, ... )` 将指纹优先发往所有人；接收进程完成 `HPL_bcast` 后重算自建指纹 `cs_recv`，调入自适应双模公式校验。
-* **源码深度映射**：
-  * **指纹计算**：[HPL_sdc_checksum.c:L9-L77](file:///C:/Users/ubuntu/Documents/Linpack-HPL/hpl/src/sdc/HPL_sdc_checksum.c#L9-L77) 中的 `HPL_sdc_compute_bcast_checksum( L2, ldl2, ml2, L1, jb_l1, DPIV, jb, cs_out )`。
-  * **广播与比对**：[HPL_pdgesvK2.c:L222-L252](file:///C:/Users/ubuntu/Documents/Linpack-HPL/hpl/src/pgesv/HPL_pdgesvK2.c#L222-L252)。若比对异常，调用 `HPL_sdc_log_fault` 写入 `HPL_SDC_FAULT_PANEL_BCAST`（对应枚举值 `0`）。
+* **源码**：
+  * **指纹计算**：[HPL_sdc_checksum.c:L9-L77](hpl/src/sdc/HPL_sdc_checksum.c#L9-L77) 中的 `HPL_sdc_compute_bcast_checksum( L2, ldl2, ml2, L1, jb_l1, DPIV, jb, cs_out )`。
+  * **广播与比对**：[HPL_pdgesvK2.c:L222-L252](hpl/src/pgesv/HPL_pdgesvK2.c#L222-L252)。若比对异常，调用 `HPL_sdc_log_fault` 写入 `HPL_SDC_FAULT_PANEL_BCAST`（对应枚举值 `0`）。
   * **故障隔离**：由于比对是在通信接收端即时完成的，系统可以通过比对源 rank 与接收 rank，**极高精度地隔离出是哪条跨节点通信链路或网卡出现了静默损坏**！
 
 ---
 
 #### 🛡️ 防线 4：回代求解与终态残差兜底 (Global Residual Gate)
-* **因果机制与数学边界**：
-  1. **解向量 6-$\sigma$ 统计学离群点筛查 (Statistical Outlier Anomaly Detection)**：在 [HPL_pdtrsv.c:L300-L348](file:///C:/Users/ubuntu/Documents/Linpack-HPL/hpl/src/pgesv/HPL_pdtrsv.c#L300-L348) 的上三角回代求解及解向量同步阶段，系统首先扫描解向量是否包含 `NaN/Inf`；更为强大的是，**系统实时统计全局解向量 $X$ 的均值 $\mu$ 与标准差 $\sigma$**：
-     $$\mu = \frac{1}{N}\sum_{i=1}^N x_i, \quad \sigma = \sqrt{\frac{1}{N-1}\sum_{i=1}^N (x_i - \mu)^2}$$
+* **Insight**：
+  1. **解向量 6-$\sigma$ 统计学离群点筛查 (Statistical Outlier Anomaly Detection)**：在 [HPL_pdtrsv.c:L300-L348](hpl/src/pgesv/HPL_pdtrsv.c#L300-L348) 的上三角回代求解及解向量同步阶段，系统首先扫描解向量是否包含 `NaN/Inf`；更为强大的是，**系统实时统计全局解向量 $X$ 的均值 $\mu$ 与标准差 $\sigma$**：
+
+     ```math
+     \mu = \frac{1}{N}\sum_{i=1}^N x_i, \quad \sigma = \sqrt{\frac{1}{N-1}\sum_{i=1}^N (x_i - \mu)^2}
+     ```
+
      如果某节点发现其求解分量满足 $Z\text{-score} = \frac{|x_i - \mu|}{\sigma} > 6.0$，立刻判定为回代 SDC 离群点并触发警报！
   2. **国际标准残差兜底**：求解结束后，在主驱动中计算官方无穷范数残差：
-     $$\text{Residual} = \frac{\|A \cdot x - b\|_\infty}{\varepsilon \cdot \left( \|A\|_\infty \|x\|_\infty + \|b\|_\infty \right) \cdot N} < 16.0$$
-* **源码深度映射**：
-  * **回代检测**：[HPL_pdtrsv.c:L308,L338](file:///C:/Users/ubuntu/Documents/Linpack-HPL/hpl/src/pgesv/HPL_pdtrsv.c#L308) 触发 `HPL_SDC_FAULT_BACK_SOLVE`（对应枚举值 `3`）。
+
+     ```math
+     \text{Residual} = \frac{\|A \cdot x - b\|_\infty}{\varepsilon \cdot \left( \|A\|_\infty \|x\|_\infty + \|b\|_\infty \right) \cdot N} < 16.0
+     ```
+* **源码**：
+  * **回代检测**：[HPL_pdtrsv.c:L308,L338](hpl/src/pgesv/HPL_pdtrsv.c#L308) 触发 `HPL_SDC_FAULT_BACK_SOLVE`（对应枚举值 `3`）。
   * **残差校验**：主程序 `HPL_pddriver.c` 中完成最终输出。
 
 ---
@@ -208,7 +226,7 @@ graph TD
 ### 4.3 数据结构极致精简与零开销架构
 
 #### 1. 面板结构体 `HPL_T_panel` 的极简扩展
-在 [hpl_panel.h:L95-L98](file:///C:/Users/ubuntu/Documents/Linpack-HPL/hpl/include/hpl_panel.h#L95-L98) 中，面板控制块对 SDC 的扩展被缩减至极致的两个字段：
+在 [hpl_panel.h:L95-L98](hpl/include/hpl_panel.h#L95-L98) 中，面板控制块对 SDC 的扩展被缩减至极致的两个字段：
 ```c
 #ifdef HPL_SDC_CHECK
    double                cs_bcast;  /* checksum of broadcast buffer */
@@ -228,7 +246,7 @@ graph TD
 ### 4.4 分布式运维：按字段独立聚类汇聚与故障定位
 
 #### 1. $O(1)$ 无阻塞链表日志 (Node-Level Fault Logging)
-在 [hpl_sdc.h:L58-L86](file:///C:/Users/ubuntu/Documents/Linpack-HPL/hpl/include/hpl_sdc.h#L58-L86) 中定义了轻量级日志链表节点 `HPL_T_SDC_FAULT`。每当防线捕获异常，`HPL_sdc_log_fault` 会以 $O(1)$ 的时间复杂度在本地链表头部插入一笔记录，完整记录：
+在 [hpl_sdc.h:L58-L86](hpl/include/hpl_sdc.h#L58-L86) 中定义了轻量级日志链表节点 `HPL_T_SDC_FAULT`。每当防线捕获异常，`HPL_sdc_log_fault` 会以 $O(1)$ 的时间复杂度在本地链表头部插入一笔记录，完整记录：
 * **物理节点特征**：通过 `MPI_Get_processor_name` 获取的主机名（如 `compute-node-042`）。
 * **网格与切片坐标**：MPI Rank、二维逻辑网格坐标 `(myrow, mycol)` 及全局矩阵绝对行/列切片 `(ia, ja)`。
 * **偏差度量**：期待指纹 `cs_expected` 与实际重算值 `cs_computed` 的绝对差值。
@@ -237,7 +255,7 @@ graph TD
 #### 2. 按字段独立聚类汇聚技术 (Per-Field Independent Gathering) —— 攻克异构对齐难题
 在分布式集群汇总日志时，存在一个长期困扰超算界的难题：**不同编译器或不同 CPU 架构（如 x86_64 与 ARM64 混排）对 C 语言结构体的内存填充与对齐（Padding/Alignment）规则完全不同**。如果直接通过 `MPI_Gather` 发送打包的结构体，极易在接收端发生字节错位、段错误或解包崩溃！
 
-为了彻底解决这一痛点，我们在 [HPL_sdc_report.c:L130-L298](file:///C:/Users/ubuntu/Documents/Linpack-HPL/hpl/src/sdc/HPL_sdc_report.c#L130-L298) 的 `HPL_sdc_report_and_aggregate` 中实现了**按字段独立聚类汇聚技术**：
+为了彻底解决这一痛点，我们在 [HPL_sdc_report.c:L130-L298](hpl/src/sdc/HPL_sdc_report.c#L130-L298) 的 `HPL_sdc_report_and_aggregate` 中实现了**按字段独立聚类汇聚技术**：
 1. **解构结构体**：摒弃了将整个 `HPL_T_SDC_FAULT` 结构体进行广播打包的传统做法。
 2. **底层基础类型独立拆解**：主进程分配 10 个独立的连续一维数组，分别对应底层基本类型：
    * `int` 字段数组：`g_mpi_rank`, `g_grid_row`, `g_grid_col`, `g_fault_type`, `g_step`, `g_global_row`, `g_global_col`
@@ -396,7 +414,10 @@ HPL.out      output file name (if any)
 
 1. **矩阵阶数 $N$ 的极限规划与内存公式**：
    为了最大化压榨算力，矩阵数据应占满集群总物理内存的 80% ~ 85%（留出 15% 给系统及 MPI 通信缓冲区）。计算公式为：
-   $$N \approx \sqrt{\frac{0.80 \times \text{Total RAM (Bytes)}}{8}}$$
+
+   ```math
+   N \approx \sqrt{\frac{0.80 \times \text{Total RAM (Bytes)}}{8}}
+   ```
    *例：集群有 4 台节点，每台 64GB 内存，总内存 256GB。则 $N \approx \sqrt{\frac{0.8 \times 256 \times 10^9}{8}} \approx 160,000$。*
 2. **面板分块维度 $NB$ 调优**：
    * $NB$ 决定了缓存命中率与 BLAS-3（`DGEMM`）的运算效率。在现代 x86_64 / ARM64 体系下，**强烈推荐设置 $NB = 192$ 或 $256$**。过小（如 $64$）会导致频繁的内存搬运，过大会造成缓存溢出和通信阻塞。
