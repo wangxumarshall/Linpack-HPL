@@ -15,9 +15,9 @@
 ### 1.1 HPL 核心目标与 FLOPS 评估
 HPL 是国际超级计算机 TOP500 榜单的官方测评基准。其核心任务是生成并求解一个稠密线性代数方程组 $A \cdot x = b$，通过统计求解时间 $T$ 来计算系统的浮点峰值性能（FLOPS）：
 
-```math
+$$
 R = \frac{\frac{2}{3}N^3 + \frac{3}{2}N^2}{T}
-```
+$$
 其中：
 * $N$ 为全局矩阵的阶数（通常在超算评测中 $N \ge 10^6$）。
 * $\frac{2}{3}N^3$ 为高斯消元法（LU 分解）的浮点运算次数。
@@ -73,9 +73,9 @@ Linpack-HPL/
 ### 3.1 2D 块循环数据分布
 为平衡各节点的计算与通信负载，HPL 采用二维块循环映射。全局矩阵 $A$ 被划分大小为 $NB \times NB$（通常 $NB=192$ 或 $256$）的子块，按行循环和列循环的方式映射到 $P \times Q$ 的二维进程网格（Process Grid）上。对于全局矩阵坐标 $(i, j)$，其对应的进程坐标为：
 
-```math
+$$
 \text{proc\_row} = \left( \lfloor i / NB \rfloor \right) \bmod P, \quad \text{proc\_col} = \left( \lfloor j / NB \rfloor \right) \bmod Q
-```
+$$
 
 ### 3.2 右瞻 LU 分解与 Look-ahead 异步深度通信
 HPL 求解核心采用右瞻法（Right-Looking）LU 分解。为了隐藏通信延迟，HPL 引入 **Look-ahead（前瞻/右瞻）通信与计算重叠机制**（参见 [HPL_pdgesvK2.c](hpl/src/pgesv/HPL_pdgesvK2.c)）：
@@ -117,12 +117,12 @@ for( i = 0; i < len; i++ ) {
 #### 2. 自适应双模断言公式
 * **痛点**：由于矩阵高斯消元过程中元素量级跨度极大（从初始面板的 $10^{150}$ 衰减至求解尾声的 $10^{-15}$），当参考指纹 $|cs_{exp}|$ 接近零时，常规的相对偏差公式 $|dev| / |cs_{exp}|$ 会因除零发生剧烈发散。
 * **解决方案**：在 [HPL_sdc_verify.c](hpl/src/sdc/HPL_sdc_verify.c#L9-L40) 中的 `HPL_sdc_verify_checksum` 实现双模平滑切换公式：
-```math
+$$
 \text{Judgment} = \begin{cases} 
 |cs_{comp} - cs_{exp}| > \max(\text{threshold}, 10^{-12}), & \text{if } |cs_{exp}| < 10^{-4} \\ 
 \frac{|cs_{comp} - cs_{exp}|}{|cs_{exp}|} > \text{threshold}, & \text{otherwise} 
 \end{cases}
-```
+$$
 
 该设计确保了无论是大数消元还是微小零空间校验，系统都能保持严密的数学鲁棒性。
 
@@ -169,9 +169,9 @@ graph TD
   1. **SIMD IEEE 754 异常扫描**：按列扫描缓冲区，拦截任何 `NaN`、`+Inf` 与 `-Inf`。
   2. **动态收敛包络线断言**：在正常高斯消元中，未消元子矩阵的元素绝对范围处于严格的收敛包络线内。我们根据步数 $j$ 设定了严格的上限阈值公式：
 
-     ```math
+     $$
      \text{Upper\_Bound}(j) = 10^{150} \times \left(1 - \frac{j}{2N}\right)
-     ```
+     $$
 
      任何超出此收敛包络线的元素立即被判定为 SDC 故障。
 * **源码**：
@@ -207,16 +207,16 @@ graph TD
 * **Insight**：
   1. **解向量 6-$\sigma$ 统计学离群点筛查 (Statistical Outlier Anomaly Detection)**：在 [HPL_pdtrsv.c:L300-L348](hpl/src/pgesv/HPL_pdtrsv.c#L300-L348) 的上三角回代求解及解向量同步阶段，系统首先扫描解向量是否包含 `NaN/Inf`；更为强大的是，**系统实时统计全局解向量 $X$ 的均值 $\mu$ 与标准差 $\sigma$**：
 
-     ```math
+     $$
      \mu = \frac{1}{N}\sum_{i=1}^N x_i, \quad \sigma = \sqrt{\frac{1}{N-1}\sum_{i=1}^N (x_i - \mu)^2}
-     ```
+     $$
 
      如果某节点发现其求解分量满足 $Z\text{-score} = \frac{|x_i - \mu|}{\sigma} > 6.0$，立刻判定为回代 SDC 离群点并触发警报！
   2. **国际标准残差兜底**：求解结束后，在主驱动中计算官方无穷范数残差：
 
-     ```math
+     $$
      \text{Residual} = \frac{\|A \cdot x - b\|_\infty}{\varepsilon \cdot \left( \|A\|_\infty \|x\|_\infty + \|b\|_\infty \right) \cdot N} < 16.0
-     ```
+     $$
 * **源码**：
   * **回代检测**：[HPL_pdtrsv.c:L308,L338](hpl/src/pgesv/HPL_pdtrsv.c#L308) 触发 `HPL_SDC_FAULT_BACK_SOLVE`（对应枚举值 `3`）。
   * **残差校验**：主程序 `HPL_pddriver.c` 中完成最终输出。
@@ -415,9 +415,9 @@ HPL.out      output file name (if any)
 1. **矩阵阶数 $N$ 的极限规划与内存公式**：
    为了最大化压榨算力，矩阵数据应占满集群总物理内存的 80% ~ 85%（留出 15% 给系统及 MPI 通信缓冲区）。计算公式为：
 
-   ```math
+   $$
    N \approx \sqrt{\frac{0.80 \times \text{Total RAM (Bytes)}}{8}}
-   ```
+   $$
    *例：集群有 4 台节点，每台 64GB 内存，总内存 256GB。则 $N \approx \sqrt{\frac{0.8 \times 256 \times 10^9}{8}} \approx 160,000$。*
 2. **面板分块维度 $NB$ 调优**：
    * $NB$ 决定了缓存命中率与 BLAS-3（`DGEMM`）的运算效率。在现代 x86_64 / ARM64 体系下，**强烈推荐设置 $NB = 192$ 或 $256$**。过小（如 $64$）会导致频繁的内存搬运，过大会造成缓存溢出和通信阻塞。
