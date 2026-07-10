@@ -81,4 +81,39 @@ int HPL_sdc_verify_panel_entry( A, lda, m, n )
    return 0;
 }
 
+#ifdef STDC_HEADERS
+HPL_T_SDC_CONFIDENCE HPL_sdc_classify_panel_entry
+(
+   const double * A,
+   const int      lda,
+   const int      m,
+   const int      n
+)
+#else
+HPL_T_SDC_CONFIDENCE HPL_sdc_classify_panel_entry( A, lda, m, n )
+   const double * A; const int lda, m, n;
+#endif
+{
+/*
+ * Purpose
+ * =======
+ * Classify a panel-entry anomaly by the strongest evidence observed.
+ * NaN/Inf is confirmed; finite range overflow remains suspected.
+ */
+   int i, j;
+
+   if( !A || m <= 0 || n <= 0 ) return HPL_SDC_SUSPECTED;
+
+   for( j = 0; j < n; j++ )
+   {
+      const double * col = A + (size_t)j * lda;
+      for( i = 0; i < m; i++ )
+      {
+         double val = col[i];
+         if( isnan(val) || isinf(val) ) return HPL_SDC_CONFIRMED;
+      }
+   }
+   return HPL_SDC_SUSPECTED;
+}
+
 #endif /* HPL_SDC_CHECK */

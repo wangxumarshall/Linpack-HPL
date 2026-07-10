@@ -192,9 +192,10 @@ void HPL_pdgesvK2
 #endif
             if( HPL_sdc_verify_panel_entry( _Aptr, panel[k]->lda, _mp, panel[k]->jb ) )
             {
-               HPL_sdc_log_fault( &sdc_log_global, myrank,
+               HPL_sdc_log_fault_ex( &sdc_log_global, myrank,
                   panel[k]->grid->myrow, panel[k]->grid->mycol,
-                  HPL_SDC_FAULT_PANEL_ENTRY, j,
+                  HPL_SDC_FAULT_PANEL_ENTRY,
+                  HPL_sdc_classify_panel_entry( _Aptr, panel[k]->lda, _mp, panel[k]->jb ), j,
                   panel[k]->ia, panel[k]->ja, 0.0, 0.0 );
                HPL_pwarn( stdout, __LINE__, "HPL_pdgesvK2",
                   "SDC detected at panel entry (from historical DGEMM) at col %d (k=%d) on rank %d",
@@ -241,9 +242,9 @@ void HPL_pdgesvK2
          {
             double dev = panel[k]->cs_bcast - cs_recv;
             if( dev < 0.0 ) dev = -dev;
-            HPL_sdc_log_fault( &sdc_log_global, myrank,
+            HPL_sdc_log_fault_ex( &sdc_log_global, myrank,
                panel[k]->grid->myrow, panel[k]->grid->mycol,
-               HPL_SDC_FAULT_PANEL_BCAST, j,
+               HPL_SDC_FAULT_PANEL_BCAST, HPL_SDC_CONFIRMED, j,
                panel[k]->ia, panel[k]->ja,
                panel[k]->cs_bcast, cs_recv );
             HPL_pwarn( stdout, __LINE__, "HPL_pdgesvK2",
@@ -321,9 +322,10 @@ void HPL_pdgesvK2
 #endif
                if( HPL_sdc_verify_panel_entry( _Aptr, panel[depth]->lda, _mp, panel[depth]->jb ) )
                {
-                  HPL_sdc_log_fault( &sdc_log_global, myrank,
+                  HPL_sdc_log_fault_ex( &sdc_log_global, myrank,
                      panel[depth]->grid->myrow, panel[depth]->grid->mycol,
-                     HPL_SDC_FAULT_PANEL_ENTRY, j,
+                     HPL_SDC_FAULT_PANEL_ENTRY,
+                     HPL_sdc_classify_panel_entry( _Aptr, panel[depth]->lda, _mp, panel[depth]->jb ), j,
                      panel[depth]->ia, panel[depth]->ja, 0.0, 0.0 );
                   HPL_pwarn( stdout, __LINE__, "HPL_pdgesvK2",
                      "SDC detected at panel entry (from historical DGEMM) at col %d (k=%d) on rank %d",
@@ -399,9 +401,9 @@ void HPL_pdgesvK2
                                       HPL_SDC_THRESHOLD ) )
          {
             double dev = fabs( panel[depth]->cs_bcast - cs_recv );
-            HPL_sdc_log_fault( &sdc_log_global, myrank,
+            HPL_sdc_log_fault_ex( &sdc_log_global, myrank,
                panel[depth]->grid->myrow, panel[depth]->grid->mycol,
-               HPL_SDC_FAULT_PANEL_BCAST, j,
+               HPL_SDC_FAULT_PANEL_BCAST, HPL_SDC_CONFIRMED, j,
                panel[depth]->ia, panel[depth]->ja,
                panel[depth]->cs_bcast, cs_recv );
             HPL_pwarn( stdout, __LINE__, "HPL_pdgesvK2",

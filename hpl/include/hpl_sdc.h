@@ -1,8 +1,8 @@
-/* 
- * -- High Performance Computing Linpack Benchmark (HPL)                
+/*
+ * -- High Performance Computing Linpack Benchmark (HPL)
  *    SDC (Silent Data Corruption) Detection Module
- *    Added as part of SDC detection enhancement                      
- */ 
+ *    Added as part of SDC detection enhancement
+ */
 #ifndef HPL_SDC_H
 #define HPL_SDC_H
 /*
@@ -51,6 +51,19 @@ typedef enum
 
 /*
  * ---------------------------------------------------------------------
+ * SDC fault confidence enumeration
+ * ---------------------------------------------------------------------
+ */
+typedef enum
+{
+   HPL_SDC_CONFIRMED      = 0,   /* direct corruption evidence       */
+   HPL_SDC_SUSPECTED      = 1,   /* strong anomaly/corruption hint   */
+   HPL_SDC_WARNING        = 2,   /* statistical warning only         */
+   HPL_SDC_CONFIDENCE_COUNT = 3  /* count of confidence levels       */
+} HPL_T_SDC_CONFIDENCE;
+
+/*
+ * ---------------------------------------------------------------------
  * SDC fault record (linked list node)
  * ---------------------------------------------------------------------
  */
@@ -61,6 +74,7 @@ typedef struct HPL_S_SDC_FAULT
    int                  grid_col;
    char                 node_name[HPL_SDC_NODE_NAME_LEN];
    HPL_T_SDC_FAULT_TYPE fault_type;
+   HPL_T_SDC_CONFIDENCE confidence;
    int                  step;
    int                  global_row;
    int                  global_col;
@@ -102,6 +116,8 @@ int    HPL_sdc_verify_checksum
 STDC_ARGS( ( const double, const double, const double ) );
 int    HPL_sdc_verify_panel_entry
 STDC_ARGS( ( const double *, const int, const int, const int ) );
+HPL_T_SDC_CONFIDENCE HPL_sdc_classify_panel_entry
+STDC_ARGS( ( const double *, const int, const int, const int ) );
 
 /* Fault logging and reporting (HPL_sdc_report.c) */
 void   HPL_sdc_log_init
@@ -110,6 +126,10 @@ void   HPL_sdc_log_fault
 STDC_ARGS( ( HPL_T_SDC_LOG *, const int, const int, const int,
               const HPL_T_SDC_FAULT_TYPE, const int, const int, const int,
               const double, const double ) );
+void   HPL_sdc_log_fault_ex
+STDC_ARGS( ( HPL_T_SDC_LOG *, const int, const int, const int,
+              const HPL_T_SDC_FAULT_TYPE, const HPL_T_SDC_CONFIDENCE,
+              const int, const int, const int, const double, const double ) );
 void   HPL_sdc_report_and_aggregate
 STDC_ARGS( ( HPL_T_SDC_LOG *, MPI_Comm, const int ) );
 void   HPL_sdc_log_cleanup
