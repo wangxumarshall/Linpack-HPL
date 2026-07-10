@@ -305,9 +305,9 @@ void HPL_pdtrsv
          int _myrank;
          _bad = 1;
          MPI_Comm_rank( GRID->all_comm, &_myrank );
-         HPL_sdc_log_fault( &sdc_log_global, _myrank,
+         HPL_sdc_log_fault_ex( &sdc_log_global, _myrank,
             GRID->myrow, GRID->mycol,
-            HPL_SDC_FAULT_BACK_SOLVE, AMAT->n,
+            HPL_SDC_FAULT_BACK_SOLVE, HPL_SDC_CONFIRMED, AMAT->n,
             0, 0, 0.0, cs_x );
          HPL_pwarn( stdout, __LINE__, "HPL_pdtrsv",
             "SDC suspected in back substitution: solution checksum anomalous"
@@ -335,9 +335,9 @@ void HPL_pdtrsv
             {
                int _myrank;
                MPI_Comm_rank( GRID->all_comm, &_myrank );
-               HPL_sdc_log_fault( &sdc_log_global, _myrank,
+               HPL_sdc_log_fault_ex( &sdc_log_global, _myrank,
                   GRID->myrow, GRID->mycol,
-                  HPL_SDC_FAULT_BACK_SOLVE, AMAT->n,
+                  HPL_SDC_FAULT_BACK_SOLVE, HPL_SDC_WARNING, AMAT->n,
                   0, 0, _mean, (double)_outliers );
                HPL_pwarn( stdout, __LINE__, "HPL_pdtrsv",
                   "SDC suspected in back substitution: %d solution outliers"

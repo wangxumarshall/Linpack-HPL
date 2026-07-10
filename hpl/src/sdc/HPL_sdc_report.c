@@ -46,26 +46,27 @@ void HPL_sdc_log_init( log, comm )
 }
 
 #ifdef STDC_HEADERS
-void HPL_sdc_log_fault
+void HPL_sdc_log_fault_ex
 (
-   HPL_T_SDC_LOG      * log,
-   int                  mpi_rank,
-   int                  grid_row,
-   int                  grid_col,
-   HPL_T_SDC_FAULT_TYPE type,
-   int                  step,
-   int                  global_row,
-   int                  global_col,
-   double               cs_expected,
-   double               cs_computed
+   HPL_T_SDC_LOG        * log,
+   int                    mpi_rank,
+   int                    grid_row,
+   int                    grid_col,
+   HPL_T_SDC_FAULT_TYPE   type,
+   HPL_T_SDC_CONFIDENCE   confidence,
+   int                    step,
+   int                    global_row,
+   int                    global_col,
+   double                 cs_expected,
+   double                 cs_computed
 )
 #else
-void HPL_sdc_log_fault( log, mpi_rank, grid_row, grid_col,
-                         type, step, global_row, global_col,
-                         cs_expected, cs_computed )
+void HPL_sdc_log_fault_ex( log, mpi_rank, grid_row, grid_col,
+                            type, confidence, step, global_row, global_col,
+                            cs_expected, cs_computed )
    HPL_T_SDC_LOG * log; int mpi_rank, grid_row, grid_col;
-   HPL_T_SDC_FAULT_TYPE type; int step, global_row, global_col;
-   double cs_expected, cs_computed;
+   HPL_T_SDC_FAULT_TYPE type; HPL_T_SDC_CONFIDENCE confidence;
+   int step, global_row, global_col; double cs_expected, cs_computed;
 #endif
 {
 /*
@@ -91,6 +92,7 @@ void HPL_sdc_log_fault( log, mpi_rank, grid_row, grid_col,
    strncpy( node->node_name, log->node_name, HPL_SDC_NODE_NAME_LEN - 1 );
    node->node_name[HPL_SDC_NODE_NAME_LEN - 1] = '\0';
    node->fault_type = type;
+   node->confidence = confidence;
    node->step       = step;
    node->global_row = global_row;
    node->global_col = global_col;
@@ -102,6 +104,34 @@ void HPL_sdc_log_fault( log, mpi_rank, grid_row, grid_col,
    node->next = log->head;
    log->head  = node;
    log->count++;
+}
+
+#ifdef STDC_HEADERS
+void HPL_sdc_log_fault
+(
+   HPL_T_SDC_LOG      * log,
+   int                  mpi_rank,
+   int                  grid_row,
+   int                  grid_col,
+   HPL_T_SDC_FAULT_TYPE type,
+   int                  step,
+   int                  global_row,
+   int                  global_col,
+   double               cs_expected,
+   double               cs_computed
+)
+#else
+void HPL_sdc_log_fault( log, mpi_rank, grid_row, grid_col,
+                         type, step, global_row, global_col,
+                         cs_expected, cs_computed )
+   HPL_T_SDC_LOG * log; int mpi_rank, grid_row, grid_col;
+   HPL_T_SDC_FAULT_TYPE type; int step, global_row, global_col;
+   double cs_expected, cs_computed;
+#endif
+{
+   HPL_sdc_log_fault_ex( log, mpi_rank, grid_row, grid_col, type,
+      HPL_SDC_SUSPECTED, step, global_row, global_col,
+      cs_expected, cs_computed );
 }
 
 static const char * HPL_sdc_fault_type_str
@@ -117,6 +147,20 @@ static const char * HPL_sdc_fault_type_str
    case HPL_SDC_FAULT_BACK_SOLVE:   return "BACK_SOLVE";
    case HPL_SDC_FAULT_BROADCAST:    return "BROADCAST";
    default:                         return "UNKNOWN";
+   }
+}
+
+static const char * HPL_sdc_confidence_str
+(
+   HPL_T_SDC_CONFIDENCE confidence
+)
+{
+   switch( confidence )
+   {
+   case HPL_SDC_CONFIRMED: return "CONFIRMED";
+   case HPL_SDC_SUSPECTED: return "SUSPECTED";
+   case HPL_SDC_WARNING:   return "WARNING";
+   default:                return "UNKNOWN";
    }
 }
 
@@ -155,6 +199,7 @@ void HPL_sdc_report_and_aggregate( local_log, comm, my_rank )
    int    * l_grid_row   = NULL;
    int    * l_grid_col   = NULL;
    int    * l_fault_type = NULL;
+   int    * l_confidence = NULL;
    int    * l_step       = NULL;
    int    * l_global_row = NULL;
    int    * l_global_col = NULL;
@@ -168,6 +213,7 @@ void HPL_sdc_report_and_aggregate( local_log, comm, my_rank )
    int    * g_grid_row   = NULL;
    int    * g_grid_col   = NULL;
    int    * g_fault_type = NULL;
+   int    * g_confidence = NULL;
    int    * g_step       = NULL;
    int    * g_global_row = NULL;
    int    * g_global_col = NULL;
@@ -189,6 +235,7 @@ void HPL_sdc_report_and_aggregate( local_log, comm, my_rank )
       l_grid_row    = (int *)   malloc( (size_t)local_count * sizeof(int) );
       l_grid_col    = (int *)   malloc( (size_t)local_count * sizeof(int) );
       l_fault_type  = (int *)   malloc( (size_t)local_count * sizeof(int) );
+      l_confidence  = (int *)   malloc( (size_t)local_count * sizeof(int) );
       l_step        = (int *)   malloc( (size_t)local_count * sizeof(int) );
       l_global_row  = (int *)   malloc( (size_t)local_count * sizeof(int) );
       l_global_col  = (int *)   malloc( (size_t)local_count * sizeof(int) );
@@ -198,7 +245,7 @@ void HPL_sdc_report_and_aggregate( local_log, comm, my_rank )
       l_node_name   = (char *)  malloc( (size_t)local_count * HPL_SDC_NODE_NAME_LEN );
 
       if( !l_mpi_rank || !l_grid_row || !l_grid_col || !l_fault_type ||
-          !l_step || !l_global_row || !l_global_col || !l_cs_expected ||
+          !l_confidence || !l_step || !l_global_row || !l_global_col || !l_cs_expected ||
           !l_cs_computed || !l_deviation || !l_node_name )
       {
          l_ok = 0;
@@ -212,6 +259,7 @@ void HPL_sdc_report_and_aggregate( local_log, comm, my_rank )
             l_grid_row[idx]    = p->grid_row;
             l_grid_col[idx]    = p->grid_col;
             l_fault_type[idx]  = (int)p->fault_type;
+            l_confidence[idx]  = (int)p->confidence;
             l_step[idx]        = p->step;
             l_global_row[idx]  = p->global_row;
             l_global_col[idx]  = p->global_col;
@@ -249,6 +297,7 @@ void HPL_sdc_report_and_aggregate( local_log, comm, my_rank )
       g_grid_row    = (int *)   malloc( (size_t)total_faults * sizeof(int) );
       g_grid_col    = (int *)   malloc( (size_t)total_faults * sizeof(int) );
       g_fault_type  = (int *)   malloc( (size_t)total_faults * sizeof(int) );
+      g_confidence  = (int *)   malloc( (size_t)total_faults * sizeof(int) );
       g_step        = (int *)   malloc( (size_t)total_faults * sizeof(int) );
       g_global_row  = (int *)   malloc( (size_t)total_faults * sizeof(int) );
       g_global_col  = (int *)   malloc( (size_t)total_faults * sizeof(int) );
@@ -258,7 +307,7 @@ void HPL_sdc_report_and_aggregate( local_log, comm, my_rank )
       g_node_name   = (char *)  malloc( (size_t)total_faults * HPL_SDC_NODE_NAME_LEN );
 
       if( !g_mpi_rank || !g_grid_row || !g_grid_col || !g_fault_type ||
-          !g_step || !g_global_row || !g_global_col || !g_cs_expected ||
+          !g_confidence || !g_step || !g_global_row || !g_global_col || !g_cs_expected ||
           !g_cs_computed || !g_deviation || !g_node_name )
       {
          g_ok = 0;
@@ -275,6 +324,7 @@ void HPL_sdc_report_and_aggregate( local_log, comm, my_rank )
    MPI_Gatherv( l_grid_row,    local_count, MPI_INT,    g_grid_row,    counts, displs, MPI_INT,    0, comm );
    MPI_Gatherv( l_grid_col,    local_count, MPI_INT,    g_grid_col,    counts, displs, MPI_INT,    0, comm );
    MPI_Gatherv( l_fault_type,  local_count, MPI_INT,    g_fault_type,  counts, displs, MPI_INT,    0, comm );
+   MPI_Gatherv( l_confidence,  local_count, MPI_INT,    g_confidence,  counts, displs, MPI_INT,    0, comm );
    MPI_Gatherv( l_step,        local_count, MPI_INT,    g_step,        counts, displs, MPI_INT,    0, comm );
    MPI_Gatherv( l_global_row,  local_count, MPI_INT,    g_global_row,  counts, displs, MPI_INT,    0, comm );
    MPI_Gatherv( l_global_col,  local_count, MPI_INT,    g_global_col,  counts, displs, MPI_INT,    0, comm );
@@ -304,6 +354,7 @@ void HPL_sdc_report_and_aggregate( local_log, comm, my_rank )
       char * node_list   = (char *)malloc( (size_t)max_nodes * HPL_SDC_NODE_NAME_LEN );
       int  * node_faults = (int *) calloc( (size_t)max_nodes, sizeof(int) );
       int  type_counts[HPL_SDC_FAULT_COUNT] = {0};
+      int  confidence_counts[HPL_SDC_CONFIDENCE_COUNT] = {0};
 
       HPL_fprintf( stdout, "\n" );
       HPL_fprintf( stdout, "===== SDC FAULT REPORT =====\n" );
@@ -314,6 +365,8 @@ void HPL_sdc_report_and_aggregate( local_log, comm, my_rank )
          HPL_fprintf( stdout, "--- Fault #%d ---\n", i+1 );
          HPL_fprintf( stdout, "  Type:        %s\n",
             HPL_sdc_fault_type_str( (HPL_T_SDC_FAULT_TYPE)g_fault_type[i] ) );
+         HPL_fprintf( stdout, "  Confidence:  %s\n",
+            HPL_sdc_confidence_str( (HPL_T_SDC_CONFIDENCE)g_confidence[i] ) );
          HPL_fprintf( stdout, "  Step:        %d\n", g_step[i] );
          HPL_fprintf( stdout, "  MPI Rank:    %d\n", g_mpi_rank[i] );
          HPL_fprintf( stdout, "  Grid Pos:    (row=%d, col=%d)\n",
@@ -329,6 +382,8 @@ void HPL_sdc_report_and_aggregate( local_log, comm, my_rank )
 
          if( g_fault_type[i] >= 0 && g_fault_type[i] < HPL_SDC_FAULT_COUNT )
             type_counts[g_fault_type[i]]++;
+         if( g_confidence[i] >= 0 && g_confidence[i] < HPL_SDC_CONFIDENCE_COUNT )
+            confidence_counts[g_confidence[i]]++;
 
          if( node_list && node_faults )
          {
@@ -371,6 +426,12 @@ void HPL_sdc_report_and_aggregate( local_log, comm, my_rank )
          type_counts[HPL_SDC_FAULT_BROADCAST],
          type_counts[HPL_SDC_FAULT_UNKNOWN] );
 
+      HPL_fprintf( stdout, "\n--- Summary by Confidence ---\n" );
+      HPL_fprintf( stdout, "  CONFIRMED: %d, SUSPECTED: %d, WARNING: %d\n",
+         confidence_counts[HPL_SDC_CONFIRMED],
+         confidence_counts[HPL_SDC_SUSPECTED],
+         confidence_counts[HPL_SDC_WARNING] );
+
       HPL_fprintf( stdout, "\nRECOMMENDATION: Replace nodes with >10 faults:\n  " );
       if( node_list && node_faults )
       {
@@ -401,6 +462,7 @@ cleanup:
    if( l_grid_row )    free( l_grid_row );
    if( l_grid_col )    free( l_grid_col );
    if( l_fault_type )  free( l_fault_type );
+   if( l_confidence )  free( l_confidence );
    if( l_step )        free( l_step );
    if( l_global_row )  free( l_global_row );
    if( l_global_col )  free( l_global_col );
@@ -412,6 +474,7 @@ cleanup:
    if( g_grid_row )    free( g_grid_row );
    if( g_grid_col )    free( g_grid_col );
    if( g_fault_type )  free( g_fault_type );
+   if( g_confidence )  free( g_confidence );
    if( g_step )        free( g_step );
    if( g_global_row )  free( g_global_row );
    if( g_global_col )  free( g_global_col );
